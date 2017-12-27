@@ -40,14 +40,14 @@ def match_expr(tz):
         right = match_expr(tz)
         right_paren = tz.require_next()
         if right_paren.kind != 'RIGHT_PAREN':
-            raise MyParseError('expected right parenthesis, got "{}"'.format(right_paren.value))
+            raise MyParseError('expected ")", got "{}"'.format(right_paren.value))
         return ExprNode(op.value, left, right)
     elif tz.token.kind == 'NUMBER':
         return int(tz.token.value)
     elif tz.token.kind == 'IDENT':
         return tz.token.value
     else:
-        raise MyParseError('expected left parenthesis or number, got "{}"'.format(tz.token.value))
+        raise MyParseError('expected "(" or number, got "{}"'.format(tz.token.value))
 
 
 def match_define(tz):
@@ -60,10 +60,10 @@ def match_define(tz):
         expr = match_expr(tz)
         right_bracket = tz.require_next()
         if right_bracket.kind != 'RIGHT_BRACKET':
-            raise MyParseError('expected right bracket, got "{}"'.format(right_bracket.value))
+            raise MyParseError('expected "]", got "{}"'.format(right_bracket.value))
         return DefineNode(ident.value, expr)
     else:
-        raise MyParseError('expected left bracket , got "{}"'.format(tz.token.value))
+        raise MyParseError('expected "[" , got "{}"'.format(tz.token.value))
 
 
 Token = namedtuple('Token', ['kind', 'value'])
