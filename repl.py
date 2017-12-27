@@ -18,14 +18,14 @@ def parse_expr(expr: str) -> ASTType:
     """Parse the expression string according to this grammar:
 
     start -> expr | define
-    define -> [ IDENT expr ]
+    define -> LET IDENT EQ expr
     expr -> ( OP expr expr )  |  NUMBER  |  IDENT
     """
     tz = Tokenizer(expr)
     token = tz.require_next()
     if token.kind in ('LEFT_PAREN', 'NUMBER', 'IDENT'):
         return match_expr(tz)
-    elif token.kind == 'LEFT_BRACKET':
+    elif token.kind == 'LET':
         return match_define(tz)
     else:
         raise MyParseError('expected "[", "(", number or identifier, got "{}"'.format(token.value))
@@ -56,19 +56,16 @@ def match_expr(tz: 'Tokenizer') -> ASTType:
 
 
 def match_define(tz: 'Tokenizer') -> ASTType:
-    if tz.token.kind == 'LEFT_BRACKET':
-        ident = tz.require_next()
-        if ident.kind != 'IDENT':
-            raise MyParseError('expected identifier, got "{}"'.format(ident.value))
-        # So that the tokenizer will be correctly positioned for match_expr.
-        tz.require_next()
-        expr = match_expr(tz)
-        right_bracket = tz.require_next()
-        if right_bracket.kind != 'RIGHT_BRACKET':
-            raise MyParseError('expected "]", got "{}"'.format(right_bracket.value))
-        return DefineNode(ident.value, expr)
-    else:
-        raise MyParseError('expected "[" , got "{}"'.format(tz.token.value))
+    ident = tz.require_next()
+    if ident.kind != 'IDENT':
+        raise MyParseError('expected identifier, got "{}"'.format(ident.value))
+    eq = tz.require_next()
+    if eq.kind != 'EQ':
+        raise MyParseError('expected "=", got "{}"'.format(eq.value))
+    # So that the tokenizer will be correctly positioned for match_expr.
+    tz.require_next()
+    expr = match_expr(tz)
+    return DefineNode(ident.value, expr)
 
 
 Token = namedtuple('Token', ['kind', 'value'])
@@ -85,7 +82,10 @@ class Tokenizer:
         ('RIGHT_PAREN', r'\)'),
         ('LEFT_BRACKET', r'\['),
         ('RIGHT_BRACKET', r'\]'),
+        # LET must come before IDENT or the latter will override the former.
+        ('LET', r'let'),
         ('IDENT', r'[A-Za-z_]+'),
+        ('EQ', r'='),
         ('OP', r'\+|-|\*'),
         ('NUMBER', r'[0-9]+'),
         ('SKIP', r'\s'),
