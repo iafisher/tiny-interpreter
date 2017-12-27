@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""A tiny Lisp dialect in Python with mypy static types."""
+"""A tiny interpreter for a stupid arithmetic language."""
 import readline
 import re
 from collections import namedtuple
@@ -9,7 +9,7 @@ from typing import Dict, Union, List, Tuple
 ParseTree = namedtuple('ParseTree', ['value', 'left', 'right'])
 
 
-def parse_lisp(expr: str) -> Union['LispVal', ParseTree]:
+def parse_expr(expr: str) -> Union[int, ParseTree]:
     """Parse the expression string according to this grammar:
 
     start -> expr
@@ -20,7 +20,7 @@ def parse_lisp(expr: str) -> Union['LispVal', ParseTree]:
     return match_expr(tz)
 
 
-def match_expr(tz: 'Tokenizer') -> Union['LispVal', ParseTree]:
+def match_expr(tz: 'Tokenizer') -> Union[int, ParseTree]:
     """Match an expression from the tokenizer, taking the tokenizer on the first token of the
     expression and leaving it one past the last token of the expression.
     """
@@ -28,26 +28,26 @@ def match_expr(tz: 'Tokenizer') -> Union['LispVal', ParseTree]:
     if token.kind == 'LEFT_PAREN':
         op = tz.require_next()
         if op.kind != 'OP':
-            raise LispParseError('expected operator, got "{}"'.format(op.value))
+            raise MyParseError('expected operator, got "{}"'.format(op.value))
         left = match_expr(tz)
         right = match_expr(tz)
         right_paren = tz.require_next()
         if right_paren.kind != 'RIGHT_PAREN':
-            raise LispParseError('expected right parenthesis, got "{}"'.format(op.value))
+            raise MyParseError('expected right parenthesis, got "{}"'.format(op.value))
         return ParseTree(op.value, left, right)
     elif token.kind == 'NUMBER':
-        return LispInt(token.value)
+        return int(token.value)
     else:
-        raise LispParseError('expected left parenthesis or number, got "{}"'.format(token.value))
+        raise MyParseError('expected left parenthesis or number, got "{}"'.format(token.value))
 
 
 Token = namedtuple('Token', ['kind', 'value'])
 
 
 class Tokenizer:
-    """An iterator over the tokens of a Lisp string. The current token is available as `self.token`.
-    The tokenizer is said to be "on" a particular token if `next(self)` will return that token.
-    See the docstring of `match_expr` above.
+    """An iterator over the tokens of an expression string. The current token is available as
+    `self.token`. The tokenizer is said to be "on" a particular token if `next(self)` will return
+    that token. See the docstring of `match_expr` above.
     """
 
     tokens = (
@@ -77,7 +77,7 @@ class Tokenizer:
         try:
             return next(self)
         except StopIteration:
-            raise LispParseError('unexpected end of input') from None
+            raise MyParseError('unexpected end of input') from None
 
     def __bool__(self):
         return bool(self.it)
@@ -90,12 +90,12 @@ BINARY_MUL = 'BINARY_MUL'
 LOAD_CONST = 'LOAD_CONST'
 
 
-def compile_lisp(ast: Union['LispVal', ParseTree]) -> List[Tuple[str, 'LispVal']]:
+def compile_ast(ast: Union[int, ParseTree]) -> List[Tuple[str, int]]:
     """Compile the AST into a list of bytecode instructions of the form (instruction name, arg). arg
     is None if the instruction does not take an argument.
     """
     if isinstance(ast, ParseTree):
-        rest = compile_lisp(ast.left) + compile_lisp(ast.right)
+        rest = compile_ast(ast.left) + compile_ast(ast.right)
         if ast.value == '+':
             rest.append( (BINARY_ADD, None) )
         elif ast.value == '-':
@@ -103,31 +103,13 @@ def compile_lisp(ast: Union['LispVal', ParseTree]) -> List[Tuple[str, 'LispVal']
         elif ast.value == '*':
             rest.append( (BINARY_MUL, None) )
         else:
-            raise LispCompileError('unknown AST value "{}"'.format(ast.value))
+            raise MyCompileError('unknown AST value "{}"'.format(ast.value))
         return rest
     else:
         return [(LOAD_CONST, ast)]
 
 
-# A type hierarchy for the Lisp dialect we're implementing. We could just use the native Python
-# types list, int and str, but this enforces a conceptual distinction between types in the language
-# we're using (Python) versus types in the language we're implementing (a Lisp dialect).
-
-class LispVal:
-    def __str__(self):
-        raise NotImplementedError
-
-class LispList(LispVal, list):
-    pass
-
-class LispInt(LispVal, int):
-    pass
-
-class LispStr(LispVal, str):
-    pass
-
-
-def execute_lisp(codeobj: List[Tuple[str, LispVal]], env: Dict[str, LispVal]) -> LispVal:
+def execute_code(codeobj: List[Tuple[str, int]], env: Dict[str, int]) -> int:
     """Execute a code object in the given environment using a virtual stack machine."""
     stack = ExecutionStack()
     for inst, arg in codeobj:
@@ -146,7 +128,7 @@ def execute_lisp(codeobj: List[Tuple[str, LispVal]], env: Dict[str, LispVal]) ->
             left = stack.pop()
             stack.append(left * right)
         else:
-            raise LispExecutionError('unrecognized bytecode instruction "{}"'.format(inst))
+            raise MyExecutionError('unrecognized bytecode instruction "{}"'.format(inst))
     return stack.pop()
 
 
@@ -159,31 +141,31 @@ class ExecutionStack(list):
         try:
             return super().pop(*args, **kwargs)
         except IndexError:
-            raise LispExecutionError('pop from empty stack') from None
+            raise MyExecutionError('pop from empty stack') from None
 
 
-class LispError(Exception):
+class MyError(Exception):
     pass
 
-class LispParseError(LispError):
+class MyParseError(MyError):
     pass
 
-class LispCompileError(LispError):
+class MyCompileError(MyError):
     pass
 
-class LispExecutionError(LispError):
+class MyExecutionError(MyError):
     pass
 
 
 if __name__ == '__main__':
     # The read-eval-print loop (REPL).
-    env = {} # type: Dict[str, LispVal]
+    env = {} # type: Dict[str, int]
     try:
         while True:
             expr = input('>>> ')
             try:
-                res = execute_lisp(compile_lisp(parse_lisp(expr)), env)
-            except LispError as e:
+                res = execute_code(compile_ast(parse_expr(expr)), env)
+            except MyError as e:
                 print('Error:', e)
             else:
                 if res is not None:
