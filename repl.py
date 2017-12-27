@@ -3,42 +3,67 @@
 import readline
 import re
 from collections import namedtuple
-from typing import Dict, Union, List, Tuple
 
 
-ParseTree = namedtuple('ParseTree', ['value', 'left', 'right'])
+ExprNode = namedtuple('ExprNode', ['value', 'left', 'right'])
+DefineNode = namedtuple('DefineNode', ['symbol', 'expr'])
 
 
-def parse_expr(expr: str) -> Union[int, ParseTree]:
+def parse_expr(expr):
     """Parse the expression string according to this grammar:
 
-    start -> expr
-    expr -> ( OP expr expr )
-    expr -> NUMBER
+    start -> expr | define
+    define -> [ IDENT expr ]
+    expr -> ( OP expr expr )  |  NUMBER  |  IDENT
     """
     tz = Tokenizer(expr)
-    return match_expr(tz)
+    token = tz.require_next()
+    if token.kind in ('LEFT_PAREN', 'NUMBER', 'IDENT'):
+        return match_expr(tz)
+    elif token.kind == 'LEFT_BRACKET':
+        return match_define(tz)
+    else:
+        raise MyParseError('expected "[", "(", number or identifier, got "{}"'.format(token.value))
 
 
-def match_expr(tz: 'Tokenizer') -> Union[int, ParseTree]:
-    """Match an expression from the tokenizer, taking the tokenizer on the first token of the
+def match_expr(tz):
+    """Match an expression from the tokenizer, taking the tokenizer on the second token of the
     expression and leaving it one past the last token of the expression.
     """
-    token = tz.require_next()
-    if token.kind == 'LEFT_PAREN':
+    if tz.token.kind == 'LEFT_PAREN':
         op = tz.require_next()
         if op.kind != 'OP':
             raise MyParseError('expected operator, got "{}"'.format(op.value))
+        tz.require_next()
         left = match_expr(tz)
+        tz.require_next()
         right = match_expr(tz)
         right_paren = tz.require_next()
         if right_paren.kind != 'RIGHT_PAREN':
-            raise MyParseError('expected right parenthesis, got "{}"'.format(op.value))
-        return ParseTree(op.value, left, right)
-    elif token.kind == 'NUMBER':
-        return int(token.value)
+            raise MyParseError('expected right parenthesis, got "{}"'.format(right_paren.value))
+        return ExprNode(op.value, left, right)
+    elif tz.token.kind == 'NUMBER':
+        return int(tz.token.value)
+    elif tz.token.kind == 'IDENT':
+        return tz.token.value
     else:
-        raise MyParseError('expected left parenthesis or number, got "{}"'.format(token.value))
+        raise MyParseError('expected left parenthesis or number, got "{}"'.format(tz.token.value))
+
+
+def match_define(tz):
+    if tz.token.kind == 'LEFT_BRACKET':
+        ident = tz.require_next()
+        if ident.kind != 'IDENT':
+            raise MyParseError('expected identifier, got "{}"'.format(op.value))
+        # So that the tokenizer will be correctly positioned for match_expr.
+        tz.require_next()
+        expr = match_expr(tz)
+        right_bracket = tz.require_next()
+        if right_bracket.kind != 'RIGHT_BRACKET':
+            raise MyParseError('expected right bracket, got "{}"'.format(right_bracket.value))
+        return DefineNode(ident.value, expr)
+    else:
+        raise MyParseError('expected left bracket , got "{}"'.format(tz.token.value))
 
 
 Token = namedtuple('Token', ['kind', 'value'])
@@ -53,6 +78,9 @@ class Tokenizer:
     tokens = (
         ('LEFT_PAREN', r'\('),
         ('RIGHT_PAREN', r'\)'),
+        ('LEFT_BRACKET', r'\['),
+        ('RIGHT_BRACKET', r'\]'),
+        ('IDENT', r'[A-Za-z_]+'),
         ('OP', r'\+|-|\*'),
         ('NUMBER', r'[0-9]+'),
     )
@@ -88,28 +116,36 @@ BINARY_ADD = 'BINARY_ADD'
 BINARY_SUB = 'BINARY_SUB'
 BINARY_MUL = 'BINARY_MUL'
 LOAD_CONST = 'LOAD_CONST'
+STORE_NAME = 'STORE_NAME'
+LOAD_NAME = 'LOAD_NAME'
 
 
-def compile_ast(ast: Union[int, ParseTree]) -> List[Tuple[str, int]]:
-    """Compile the AST into a list of bytecode instructions of the form (instruction name, arg). arg
-    is None if the instruction does not take an argument.
+def compile_ast(ast):
+    """Compile the AST into a list of bytecode instructions of the form (instruction, arg). arg is
+    None if the instruction does not take an argument.
     """
-    if isinstance(ast, ParseTree):
-        rest = compile_ast(ast.left) + compile_ast(ast.right)
+    if isinstance(ast, ExprNode):
+        ret = compile_ast(ast.left) + compile_ast(ast.right)
         if ast.value == '+':
-            rest.append( (BINARY_ADD, None) )
+            ret.append( (BINARY_ADD, None) )
         elif ast.value == '-':
-            rest.append( (BINARY_SUB, None) )
+            ret.append( (BINARY_SUB, None) )
         elif ast.value == '*':
-            rest.append( (BINARY_MUL, None) )
+            ret.append( (BINARY_MUL, None) )
         else:
-            raise MyCompileError('unknown AST value "{}"'.format(ast.value))
-        return rest
+            raise ValueError('unknown AST value "{}"'.format(ast.value))
+        return ret
+    elif isinstance(ast, DefineNode):
+        ret = compile_ast(ast.expr)
+        ret.append( (STORE_NAME, ast.symbol) )
+        return ret
+    elif isinstance(ast, str):
+        return [(LOAD_NAME, ast)]
     else:
         return [(LOAD_CONST, ast)]
 
 
-def execute_code(codeobj: List[Tuple[str, int]], env: Dict[str, int]) -> int:
+def execute_code(codeobj, env):
     """Execute a code object in the given environment using a virtual stack machine."""
     stack = ExecutionStack()
     for inst, arg in codeobj:
@@ -127,9 +163,16 @@ def execute_code(codeobj: List[Tuple[str, int]], env: Dict[str, int]) -> int:
             right = stack.pop()
             left = stack.pop()
             stack.append(left * right)
+        elif inst == STORE_NAME:
+            env[arg] = stack.pop()
+        elif inst == LOAD_NAME:
+            stack.append(env[arg])
         else:
-            raise MyExecutionError('unrecognized bytecode instruction "{}"'.format(inst))
-    return stack.pop()
+            raise ValueError('unrecognized bytecode instruction "{}"'.format(inst))
+    if stack:
+        return stack.pop()
+    else:
+        return None
 
 
 class ExecutionStack(list):
@@ -150,16 +193,13 @@ class MyError(Exception):
 class MyParseError(MyError):
     pass
 
-class MyCompileError(MyError):
-    pass
-
 class MyExecutionError(MyError):
     pass
 
 
 if __name__ == '__main__':
     # The read-eval-print loop (REPL).
-    env = {} # type: Dict[str, int]
+    env = {}
     try:
         while True:
             expr = input('>>> ')
