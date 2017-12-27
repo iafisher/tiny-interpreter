@@ -3,13 +3,18 @@
 import readline
 import re
 from collections import namedtuple
+from typing import Union, Dict, Optional, List, Tuple, cast
 
 
 ExprNode = namedtuple('ExprNode', ['value', 'left', 'right'])
 DefineNode = namedtuple('DefineNode', ['symbol', 'expr'])
 
+ASTType = Union[ExprNode, DefineNode, int, str]
+EnvType = Dict[str, int]
+BytecodeType = Tuple[int, Union[int, str, None]]
 
-def parse_expr(expr):
+
+def parse_expr(expr: str) -> ASTType:
     """Parse the expression string according to this grammar:
 
     start -> expr | define
@@ -26,7 +31,7 @@ def parse_expr(expr):
         raise MyParseError('expected "[", "(", number or identifier, got "{}"'.format(token.value))
 
 
-def match_expr(tz):
+def match_expr(tz: 'Tokenizer') -> ASTType:
     """Match an expression from the tokenizer, taking the tokenizer on the second token of the
     expression and leaving it one past the last token of the expression.
     """
@@ -50,11 +55,11 @@ def match_expr(tz):
         raise MyParseError('expected "(" or number, got "{}"'.format(tz.token.value))
 
 
-def match_define(tz):
+def match_define(tz: 'Tokenizer') -> ASTType:
     if tz.token.kind == 'LEFT_BRACKET':
         ident = tz.require_next()
         if ident.kind != 'IDENT':
-            raise MyParseError('expected identifier, got "{}"'.format(op.value))
+            raise MyParseError('expected identifier, got "{}"'.format(ident.value))
         # So that the tokenizer will be correctly positioned for match_expr.
         tz.require_next()
         expr = match_expr(tz)
@@ -88,14 +93,14 @@ class Tokenizer:
     )
     regex = re.compile('|'.join('(?P<%s>%s)' % tok for tok in tokens))
 
-    def __init__(self, expr):
+    def __init__(self, expr: str) -> None:
         self.it = self.regex.finditer(expr)
-        self.token = None
+        self.token = None # type: Optional[Token]
 
-    def __iter__(self):
+    def __iter__(self) -> 'Tokenizer':
         return self
 
-    def __next__(self):
+    def __next__(self) -> Token:
         while True:
             mo = next(self.it)
             kind = mo.lastgroup
@@ -107,14 +112,14 @@ class Tokenizer:
         self.token = Token(kind, val)
         return self.token
 
-    def require_next(self):
+    def require_next(self) -> Token:
         """Same as __next__ except raises a useful exception when the iterator is exhausted."""
         try:
-            return next(self)
+            return next(self) # type: ignore
         except StopIteration:
             raise MyParseError('unexpected end of input') from None
 
-    def __bool__(self):
+    def __bool__(self) -> bool:
         return bool(self.it)
 
 
@@ -127,7 +132,7 @@ STORE_NAME =  4
 LOAD_NAME  =  5
 
 
-def compile_ast(ast):
+def compile_ast(ast: ASTType) -> List[BytecodeType]:
     """Compile the AST into a list of bytecode instructions of the form (instruction, arg). arg is
     None if the instruction does not take an argument.
     """
@@ -152,7 +157,7 @@ def compile_ast(ast):
         return [(LOAD_CONST, ast)]
 
 
-def execute_code(codeobj, env):
+def execute_code(codeobj: List[BytecodeType], env: EnvType) -> Optional[int]:
     """Execute a code object in the given environment using a virtual stack machine."""
     stack = ExecutionStack()
     for inst, arg in codeobj:
@@ -171,10 +176,10 @@ def execute_code(codeobj, env):
             left = stack.pop()
             stack.append(left * right)
         elif inst == STORE_NAME:
-            env[arg] = stack.pop()
+            env[cast(str, arg)] = stack.pop()
         elif inst == LOAD_NAME:
             try:
-                stack.append(env[arg])
+                stack.append(env[cast(str, arg)])
             except KeyError:
                 raise MyExecutionError('unbound identifier "{}"'.format(arg))
         else:
@@ -209,7 +214,7 @@ class MyExecutionError(MyError):
 
 if __name__ == '__main__':
     # The read-eval-print loop (REPL).
-    env = {}
+    env = {} # type: EnvType
     try:
         while True:
             expr = input('>>> ')
