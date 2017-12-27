@@ -83,6 +83,8 @@ class Tokenizer:
         ('IDENT', r'[A-Za-z_]+'),
         ('OP', r'\+|-|\*'),
         ('NUMBER', r'[0-9]+'),
+        ('SKIP', r'\s'),
+        ('MISMATCH', r'.'),
     )
     regex = re.compile('|'.join('(?P<%s>%s)' % tok for tok in tokens))
 
@@ -94,9 +96,14 @@ class Tokenizer:
         return self
 
     def __next__(self):
-        mo = next(self.it)
-        kind = mo.lastgroup
-        val = mo.group(kind)
+        while True:
+            mo = next(self.it)
+            kind = mo.lastgroup
+            val = mo.group(kind)
+            if kind == 'MISMATCH':
+                raise MyParseError('unexpected character "{}"'.format(val))
+            elif kind != 'SKIP':
+                break
         self.token = Token(kind, val)
         return self.token
 
