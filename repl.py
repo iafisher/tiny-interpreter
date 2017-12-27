@@ -2,6 +2,9 @@
 """A tiny interpreter for a stupid arithmetic language."""
 import readline
 import re
+import unittest
+import argparse
+import sys
 from collections import namedtuple, ChainMap
 from typing import Union, Dict, Optional, List, Tuple, cast
 
@@ -281,19 +284,47 @@ class MyExecutionError(MyError):
     pass
 
 
+class ParseTests(unittest.TestCase):
+    def test_expr(self):
+        self.assertEqual(parse_expr('1'), 1)
+        self.assertEqual(parse_expr('x'), 'x')
+        self.assertEqual(parse_expr('(+ 8 2)'), OpNode('+', 8, 2))
+        self.assertEqual(parse_expr('(+ (* 4 2) (- 3 1))'), OpNode('+', OpNode('*', 4, 2), 
+                                                                        OpNode('-', 3, 1)))
+        self.assertEqual(parse_expr('(f 1 2 3 4)'), CallNode('f', [1, 2, 3, 4]))
+        self.assertEqual(parse_expr('(f 1 (+ 1 1) 3 4)'), CallNode('f', [1, OpNode('+', 1, 1), 3, 4]))
+
+    def test_define(self):
+        self.assertEqual(parse_expr('let x = 10'), DefineNode('x', 10))
+        self.assertEqual(parse_expr('let x = (* 5 2)'), DefineNode('x', OpNode('*', 5, 2)))
+        self.assertEqual(parse_expr('let x = (* 5 (+ 1 1))'), DefineNode('x', OpNode('*', 5, OpNode('+', 1, 1))))
+
+    def test_function(self):
+        self.assertEqual(parse_expr('function f x = 10'), DefineNode('f', Function(['x'], [(LOAD_CONST, 10)])))
+
+
+class ExecTests(unittest.TestCase):
+    pass
+
+
 if __name__ == '__main__':
-    # The read-eval-print loop (REPL).
-    env = {} # type: EnvType
-    try:
-        while True:
-            expr = input('>>> ')
-            try:
-                res = execute_code(compile_ast(parse_expr(expr)), env)
-            except MyError as e:
-                print('Error:', e)
-            else:
-                if res is not None:
-                    print(res)
-    except (KeyboardInterrupt, EOFError):
-        print()
-        pass
+    aparser = argparse.ArgumentParser()
+    aparser.add_argument('--test', default=False, action='store_true', help='Run the test suite')
+    args = aparser.parse_args()
+    if args.test:
+        unittest.main(argv=sys.argv[:1])
+    else:
+        env = {} # type: EnvType
+        try:
+            while True:
+                expr = input('>>> ')
+                try:
+                    res = execute_code(compile_ast(parse_expr(expr)), env)
+                except MyError as e:
+                    print('Error:', e)
+                else:
+                    if res is not None:
+                        print(res)
+        except (KeyboardInterrupt, EOFError):
+            print()
+            pass
