@@ -2,16 +2,18 @@
 """A tiny interpreter for a stupid arithmetic language."""
 import readline
 import re
-from collections import namedtuple
+from collections import namedtuple, ChainMap
 from typing import Union, Dict, Optional, List, Tuple, cast
 
 
-ExprNode = namedtuple('ExprNode', ['value', 'left', 'right'])
+OpNode = namedtuple('OpNode', ['value', 'left', 'right'])
+CallNode = namedtuple('CallNode', ['name', 'args'])
 DefineNode = namedtuple('DefineNode', ['symbol', 'expr'])
+Function = namedtuple('Function', ['parameters', 'code'])
 
-ASTType = Union[ExprNode, DefineNode, int, str]
-EnvType = Dict[str, int]
-BytecodeType = Tuple[int, Union[int, str, None]]
+ASTType = Union[OpNode, CallNode, DefineNode, Function, int, str]
+EnvType = Union[Dict[str, int], ChainMap]
+BytecodeType = Tuple[int, Union[Function, int, str, None]]
 
 
 def parse_expr(expr: str) -> ASTType:
@@ -19,40 +21,61 @@ def parse_expr(expr: str) -> ASTType:
 
     start -> expr | define
     define -> LET IDENT EQ expr
-    expr -> ( OP expr expr )  |  NUMBER  |  IDENT
+    function -> FUNCTION IDENT+ EQ EXPR
+    expr -> ( OP expr expr )  |  ( IDENT expr* )  |  NUMBER  |  IDENT
     """
     tz = Tokenizer(expr)
     token = tz.require_next()
-    if token.kind in ('LEFT_PAREN', 'NUMBER', 'IDENT'):
+    if token.kind in EXPR_FIRST:
         return match_expr(tz)
     elif token.kind == 'LET':
         return match_define(tz)
+    elif token.kind == 'FUNCTION':
+        return match_function(tz)
     else:
         raise MyParseError('expected "[", "(", number or identifier, got "{}"'.format(token.value))
 
 
+EXPR_FIRST = frozenset(['LEFT_PAREN', 'NUMBER', 'IDENT'])
 def match_expr(tz: 'Tokenizer') -> ASTType:
-    """Match an expression from the tokenizer, taking the tokenizer on the second token of the
-    expression and leaving it one past the last token of the expression.
+    """Match an expression from the tokenizer. Tokenizer starts at position 1 of the expression
+    and ends at position 1 of the next expression.
     """
     if tz.token.kind == 'LEFT_PAREN':
         op = tz.require_next()
-        if op.kind != 'OP':
+        if op.kind == 'OP':
+            tz.require_next()
+            left = match_expr(tz)
+            right = match_expr(tz)
+            if tz.token.kind != 'RIGHT_PAREN':
+                raise MyParseError('expected ")", got "{}"'.format(tz.token.value))
+            tz.optional_next()
+            return OpNode(op.value, left, right)
+        elif op.kind == 'IDENT':
+            args = match_expr_star(tz)
+            if tz.token.kind != 'RIGHT_PAREN':
+                raise MyParseError('expected ")", got "{}"'.format(tz.token.value))
+            return CallNode(op.value, args)
+        else:
             raise MyParseError('expected operator, got "{}"'.format(op.value))
-        tz.require_next()
-        left = match_expr(tz)
-        tz.require_next()
-        right = match_expr(tz)
-        right_paren = tz.require_next()
-        if right_paren.kind != 'RIGHT_PAREN':
-            raise MyParseError('expected ")", got "{}"'.format(right_paren.value))
-        return ExprNode(op.value, left, right)
     elif tz.token.kind == 'NUMBER':
-        return int(tz.token.value)
+        ret = tz.token.value
+        tz.optional_next()
+        return int(ret)
     elif tz.token.kind == 'IDENT':
-        return tz.token.value
+        ret = tz.token.value
+        tz.optional_next()
+        return ret
     else:
         raise MyParseError('expected "(" or number, got "{}"'.format(tz.token.value))
+
+
+def match_expr_star(tz: 'Tokenizer') -> List[ASTType]:
+    tz.require_next()
+    ret = []
+    while tz.token.kind in EXPR_FIRST:
+        ret.append(match_expr(tz))
+    return ret
 
 
 def match_define(tz: 'Tokenizer') -> ASTType:
@@ -66,6 +89,24 @@ def match_define(tz: 'Tokenizer') -> ASTType:
     tz.require_next()
     expr = match_expr(tz)
     return DefineNode(ident.value, expr)
+
+
+def match_function(tz: 'Tokenizer') -> ASTType:
+    name = tz.require_next()
+    if name.kind != 'IDENT':
+        raise MyParseError('expected identifier, got "{}"'.format(name.value))
+    parameters = []
+    param = tz.require_next()
+    while param.kind == 'IDENT':
+        parameters.append(param.value)
+        param = tz.require_next()
+    if param.kind != 'EQ':
+        raise MyParseError('expected "=", got "{}"'.format(param.value))
+    # So that the tokenizer will be correctly positioned for match_expr.
+    tz.require_next()
+    expr = match_expr(tz)
+    code = compile_ast(expr)
+    return DefineNode(name.value, Function(parameters, code))
 
 
 Token = namedtuple('Token', ['kind', 'value'])
@@ -82,8 +123,9 @@ class Tokenizer:
         ('RIGHT_PAREN', r'\)'),
         ('LEFT_BRACKET', r'\['),
         ('RIGHT_BRACKET', r'\]'),
-        # LET must come before IDENT or the latter will override the former.
+        # Keywords must come before IDENT or the latter will override the former.
         ('LET', r'let'),
+        ('FUNCTION', r'function'),
         ('IDENT', r'[A-Za-z_]+'),
         ('EQ', r'='),
         ('OP', r'\+|-|\*'),
@@ -119,24 +161,32 @@ class Tokenizer:
         except StopIteration:
             raise MyParseError('unexpected end of input') from None
 
+    def optional_next(self) -> Optional[Token]:
+        """Same as __next__ except None is returned on StopIteration."""
+        try:
+            return next(self) # type: ignore
+        except StopIteration:
+            return None
+
     def __bool__(self) -> bool:
         return bool(self.it)
 
 
 # Definition of bytecode instruction names.
-BINARY_ADD =  0
-BINARY_SUB =  1
-BINARY_MUL =  2
-LOAD_CONST =  3
-STORE_NAME =  4
-LOAD_NAME  =  5
+BINARY_ADD    = 'BINARY_ADD'
+BINARY_SUB    = 'BINARY_SUB'
+BINARY_MUL    = 'BINARY_MUL'
+LOAD_CONST    = 'LOAD_CONST'
+STORE_NAME    = 'STORE_NAME'
+LOAD_NAME     = 'LOAD_NAME'
+CALL_FUNCTION = 'CALL_FUNCTION'
 
 
 def compile_ast(ast: ASTType) -> List[BytecodeType]:
     """Compile the AST into a list of bytecode instructions of the form (instruction, arg). arg is
     None if the instruction does not take an argument.
     """
-    if isinstance(ast, ExprNode):
+    if isinstance(ast, OpNode):
         ret = compile_ast(ast.left) + compile_ast(ast.right)
         if ast.value == '+':
             ret.append( (BINARY_ADD, None) )
@@ -146,6 +196,13 @@ def compile_ast(ast: ASTType) -> List[BytecodeType]:
             ret.append( (BINARY_MUL, None) )
         else:
             raise ValueError('unknown AST value "{}"'.format(ast.value))
+        return ret
+    elif isinstance(ast, CallNode):
+        ret = []
+        for arg in reversed(ast.args):
+            ret += compile_ast(arg)
+        ret.append( (LOAD_NAME, ast.name) )
+        ret.append( (CALL_FUNCTION, None) )
         return ret
     elif isinstance(ast, DefineNode):
         ret = compile_ast(ast.expr)
@@ -182,6 +239,18 @@ def execute_code(codeobj: List[BytecodeType], env: EnvType) -> Optional[int]:
                 stack.append(env[cast(str, arg)])
             except KeyError:
                 raise MyExecutionError('unbound identifier "{}"'.format(arg))
+        elif inst == CALL_FUNCTION:
+            new_env = ChainMap({}, env)
+            function = stack.pop()
+            if isinstance(function, Function):
+                for param in function.parameters:
+                    val = stack.pop()
+                    new_env[param] = val
+                res = execute_code(function.code, new_env)
+                if res is not None:
+                    stack.append(res)
+            else:
+                raise MyExecutionError('first value of expression must be function')
         else:
             raise ValueError('unrecognized bytecode instruction "{}"'.format(inst))
     if stack:
