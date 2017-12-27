@@ -119,12 +119,12 @@ class Tokenizer:
 
 
 # Definition of bytecode instruction names.
-BINARY_ADD = 'BINARY_ADD'
-BINARY_SUB = 'BINARY_SUB'
-BINARY_MUL = 'BINARY_MUL'
-LOAD_CONST = 'LOAD_CONST'
-STORE_NAME = 'STORE_NAME'
-LOAD_NAME = 'LOAD_NAME'
+BINARY_ADD =  0
+BINARY_SUB =  1
+BINARY_MUL =  2
+LOAD_CONST =  3
+STORE_NAME =  4
+LOAD_NAME  =  5
 
 
 def compile_ast(ast):
