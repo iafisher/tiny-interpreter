@@ -173,7 +173,10 @@ def execute_code(codeobj, env):
         elif inst == STORE_NAME:
             env[arg] = stack.pop()
         elif inst == LOAD_NAME:
-            stack.append(env[arg])
+            try:
+                stack.append(env[arg])
+            except KeyError:
+                raise MyExecutionError('unbound identifier "{}"'.format(arg))
         else:
             raise ValueError('unrecognized bytecode instruction "{}"'.format(inst))
     if stack:
