@@ -12,7 +12,10 @@ from typing import Union, Dict, Optional, List, Tuple, cast
 OpNode = namedtuple('OpNode', ['value', 'left', 'right'])
 CallNode = namedtuple('CallNode', ['name', 'args'])
 DefineNode = namedtuple('DefineNode', ['symbol', 'expr'])
-Function = namedtuple('Function', ['parameters', 'code'])
+
+class Function(namedtuple('Function', ['name', 'parameters', 'code'])):
+    def __str__(self):
+        return '<function "{0.name}">'.format(self)
 
 ASTType = Union[OpNode, CallNode, DefineNode, Function, int, str]
 EnvType = Union[Dict[str, int], ChainMap]
@@ -114,7 +117,7 @@ def match_function(tz: 'Tokenizer') -> ASTType:
     tz.require_next()
     expr = match_expr(tz)
     code = compile_ast(expr)
-    return DefineNode(name.value, Function(parameters, code))
+    return DefineNode(name.value, Function(name.value, parameters, code))
 
 
 Token = namedtuple('Token', ['kind', 'value'])
@@ -253,6 +256,8 @@ def execute_code(codeobj: List[BytecodeType], env: EnvType) -> Optional[int]:
             new_env = ChainMap({}, env)
             function = stack.pop()
             if isinstance(function, Function):
+                if len(stack) < len(function.parameters):
+                    raise MyExecutionError('too few arguments to function "{}"'.format(function.name))
                 for param in function.parameters:
                     val = stack.pop()
                     new_env[param] = val
@@ -307,7 +312,7 @@ class ParseTests(unittest.TestCase):
         self.assertEqual(parse_expr('let x = (* 5 (+ 1 1))'), DefineNode('x', OpNode('*', 5, OpNode('+', 1, 1))))
 
     def test_function(self):
-        self.assertEqual(parse_expr('function f x = 10'), DefineNode('f', Function(['x'], [(LOAD_CONST, 10)])))
+        self.assertEqual(parse_expr('function f x = 10'), DefineNode('f', Function('f', ['x'], [(LOAD_CONST, 10)])))
 
 
 class ExecTests(unittest.TestCase):
