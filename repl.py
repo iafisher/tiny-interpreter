@@ -336,6 +336,15 @@ class ExecTests(unittest.TestCase):
         self.assertEqual(execute_expr('function f x y = (* (+ x x) (+ y y))', env), None)
         self.assertEqual(execute_expr('(f 5 3)', env), 60)
         self.assertEqual(execute_expr('(f (f (+ 3 2) 3) 3)', env), 720)
+        # Make sure that function parameters do not have global scope.
+        with self.assertRaises(MyExecutionError):
+            execute_expr('x', env)
+        with self.assertRaises(MyExecutionError):
+            execute_expr('y', env)
+        execute_expr('let x = 42', env)
+        execute_expr('(f 1 1)', env)
+        # Make sure function calls don't overwrite local variables with their parameters.
+        self.assertEqual(execute_expr('x', env), 42)
 
 
 if __name__ == '__main__':
