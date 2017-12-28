@@ -19,6 +19,10 @@ EnvType = Union[Dict[str, int], ChainMap]
 BytecodeType = Tuple[int, Union[Function, int, str, None]]
 
 
+def execute_expr(expr: str, env: EnvType) -> Optional[int]:
+    return execute_code(compile_ast(parse_expr(expr)), env)
+
+
 def parse_expr(expr: str) -> ASTType:
     """Parse the expression string according to this grammar:
 
@@ -58,6 +62,7 @@ def match_expr(tz: 'Tokenizer') -> ASTType:
             args = match_expr_star(tz)
             if tz.token.kind != 'RIGHT_PAREN':
                 raise MyParseError('expected ")", got "{}"'.format(tz.token.value))
+            tz.optional_next()
             return CallNode(op.value, args)
         else:
             raise MyParseError('expected operator, got "{}"'.format(op.value))
@@ -289,7 +294,7 @@ class ParseTests(unittest.TestCase):
         self.assertEqual(parse_expr('1'), 1)
         self.assertEqual(parse_expr('x'), 'x')
         self.assertEqual(parse_expr('(+ 8 2)'), OpNode('+', 8, 2))
-        self.assertEqual(parse_expr('(+ (* 4 2) (- 3 1))'), OpNode('+', OpNode('*', 4, 2), 
+        self.assertEqual(parse_expr('(+ (* 4 2) (- 3 1))'), OpNode('+', OpNode('*', 4, 2),
                                                                         OpNode('-', 3, 1)))
         self.assertEqual(parse_expr('(f 1 2 3 4)'), CallNode('f', [1, 2, 3, 4]))
         self.assertEqual(parse_expr('(f 1 (+ 1 1) 3 4)'), CallNode('f', [1, OpNode('+', 1, 1), 3, 4]))
@@ -304,7 +309,26 @@ class ParseTests(unittest.TestCase):
 
 
 class ExecTests(unittest.TestCase):
-    pass
+    def test_arithmetic(self):
+        env = {}
+        self.assertEqual(execute_expr('(+ 1 1)', env), 2)
+        self.assertEqual(execute_expr('(+ 31 11)', env), 42)
+        self.assertEqual(execute_expr('(+ (- 33 2) 11)', env), 42)
+        self.assertEqual(execute_expr('(+ (- 33 2) (- (* 10 2) 9))', env), 42)
+
+    def test_binding(self):
+        env = {}
+        self.assertEqual(execute_expr('let x = 10', env), None)
+        self.assertEqual(execute_expr('x', env), 10)
+        self.assertEqual(execute_expr('let y = (* 5 x)', env), None)
+        self.assertEqual(execute_expr('y', env), 50)
+        self.assertEqual(execute_expr('(+ 1 y)', env), 51)
+
+    def test_function(self):
+        env = {}
+        self.assertEqual(execute_expr('function f x y = (* (+ x x) (+ y y))', env), None)
+        self.assertEqual(execute_expr('(f 5 3)', env), 60)
+        self.assertEqual(execute_expr('(f (f (+ 3 2) 3) 3)', env), 720)
 
 
 if __name__ == '__main__':
