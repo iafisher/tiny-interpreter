@@ -9,21 +9,25 @@ from collections import namedtuple, ChainMap
 from typing import Union, Dict, Optional, List, Tuple, cast
 
 
+###################
+#  PARSING STAGE  #
+###################
+
+# Node types returned by the parser.
 OpNode = namedtuple('OpNode', ['value', 'left', 'right'])
 CallNode = namedtuple('CallNode', ['name', 'args'])
 DefineNode = namedtuple('DefineNode', ['symbol', 'expr'])
 
 class Function(namedtuple('Function', ['name', 'parameters', 'code'])):
+    """Internal representation of functions. The `name` field is only used for nicer error messages.
+    """
     def __str__(self):
         return '<function "{0.name}">'.format(self)
 
+# Type declarations for mypy.
 ASTType = Union[OpNode, CallNode, DefineNode, Function, int, str]
 EnvType = Union[Dict[str, int], ChainMap]
 BytecodeType = Tuple[str, Union[Function, int, str]]
-
-
-def execute_expr(expr: str, env: EnvType) -> Optional[int]:
-    return execute_code(compile_ast(parse_expr(expr)), env)
 
 
 def parse_expr(expr: str) -> ASTType:
@@ -41,16 +45,16 @@ def parse_expr(expr: str) -> ASTType:
     elif token.kind == 'LET':
         return match_define(tz)
     elif token.kind == 'FUNCTION':
-        return match_function(tz)
+        return match_function_decl(tz)
     else:
         raise MyParseError('expected "[", "(", number or identifier, got "{}"'.format(token.value))
 
 
+# The FIRST set of the expr rule: the set of all tokens that could start an expr production.
 EXPR_FIRST = frozenset(['LEFT_PAREN', 'NUMBER', 'IDENT'])
+
 def match_expr(tz: 'Tokenizer') -> ASTType:
-    """Match an expression from the tokenizer. Tokenizer starts at position 1 of the expression
-    and ends at position 1 of the next expression.
-    """
+    """Match an expression."""
     if tz.token.kind == 'LEFT_PAREN':
         op = tz.require_next()
         if op.kind == 'OP':
@@ -62,6 +66,7 @@ def match_expr(tz: 'Tokenizer') -> ASTType:
             tz.optional_next()
             return OpNode(op.value, left, right)
         elif op.kind == 'IDENT':
+            tz.require_next()
             args = match_expr_star(tz)
             if tz.token.kind != 'RIGHT_PAREN':
                 raise MyParseError('expected ")", got "{}"'.format(tz.token.value))
@@ -82,7 +87,7 @@ def match_expr(tz: 'Tokenizer') -> ASTType:
 
 
 def match_expr_star(tz: 'Tokenizer') -> List[ASTType]:
-    tz.require_next()
+    """Match zero or more expressions."""
     ret = []
     while tz.token.kind in EXPR_FIRST:
         ret.append(match_expr(tz))
@@ -90,6 +95,7 @@ def match_expr_star(tz: 'Tokenizer') -> List[ASTType]:
 
 
 def match_define(tz: 'Tokenizer') -> ASTType:
+    """Match a define statement."""
     ident = tz.require_next()
     if ident.kind != 'IDENT':
         raise MyParseError('expected identifier, got "{}"'.format(ident.value))
@@ -102,7 +108,8 @@ def match_define(tz: 'Tokenizer') -> ASTType:
     return DefineNode(ident.value, expr)
 
 
-def match_function(tz: 'Tokenizer') -> ASTType:
+def match_function_decl(tz: 'Tokenizer') -> ASTType:
+    """Match a function declaration."""
     name = tz.require_next()
     if name.kind != 'IDENT':
         raise MyParseError('expected identifier, got "{}"'.format(name.value))
@@ -124,9 +131,8 @@ Token = namedtuple('Token', ['kind', 'value'])
 
 
 class Tokenizer:
-    """An iterator over the tokens of an expression string. The current token is available as
-    `self.token`. The tokenizer is said to be "on" a particular token if `next(self)` will return
-    that token. See the docstring of `match_expr` above.
+    """An iterator over the tokens of an expression string. After iteration has started, the last
+    token returned by __next__ is available as `self.token`.
     """
 
     tokens = (
@@ -183,6 +189,10 @@ class Tokenizer:
         return bool(self.it)
 
 
+#######################
+#  COMPILATION STAGE  #
+#######################
+
 # Definition of bytecode instruction names.
 BINARY_ADD    = 'BINARY_ADD'
 BINARY_SUB    = 'BINARY_SUB'
@@ -227,8 +237,12 @@ def compile_ast(ast: ASTType) -> List[BytecodeType]:
         return [(LOAD_CONST, ast)]
 
 
+#####################
+#  EXECUTION STAGE  #
+#####################
+
 def execute_code(codeobj: List[BytecodeType], env: EnvType) -> Optional[int]:
-    """Execute a code object in the given environment using a virtual stack machine."""
+    """Execute a code object in the given environment."""
     stack = ExecutionStack()
     for inst, arg in codeobj:
         if inst == LOAD_CONST:
@@ -288,6 +302,9 @@ class ExecutionStack(list):
             raise MyExecutionError('pop from empty stack') from None
 
 
+# This error hierarchy allows me to distinguish between errors in my code, signalled by regular
+# Python exceptions, and errors in the code being interpreted, signalled by MyError exceptions.
+
 class MyError(Exception):
     pass
 
@@ -298,6 +315,15 @@ class MyExecutionError(MyError):
     pass
 
 
+def execute_expr(expr: str, env: EnvType) -> Optional[int]:
+    """A shortcut function to parse, compile and execute an expression."""
+    return execute_code(compile_ast(parse_expr(expr)), env)
+
+
+################
+#  TEST SUITE  #
+################
+
 class ParseTests(unittest.TestCase):
     def test_expr(self):
         self.assertEqual(parse_expr('1'), 1)
@@ -306,15 +332,18 @@ class ParseTests(unittest.TestCase):
         self.assertEqual(parse_expr('(+ (* 4 2) (- 3 1))'), OpNode('+', OpNode('*', 4, 2),
                                                                         OpNode('-', 3, 1)))
         self.assertEqual(parse_expr('(f 1 2 3 4)'), CallNode('f', [1, 2, 3, 4]))
-        self.assertEqual(parse_expr('(f 1 (+ 1 1) 3 4)'), CallNode('f', [1, OpNode('+', 1, 1), 3, 4]))
+        self.assertEqual(parse_expr('(f 1 (+ 1 1) 3 4)'), 
+                         CallNode('f', [1, OpNode('+', 1, 1), 3, 4]))
 
     def test_define(self):
         self.assertEqual(parse_expr('let x = 10'), DefineNode('x', 10))
         self.assertEqual(parse_expr('let x = (* 5 2)'), DefineNode('x', OpNode('*', 5, 2)))
-        self.assertEqual(parse_expr('let x = (* 5 (+ 1 1))'), DefineNode('x', OpNode('*', 5, OpNode('+', 1, 1))))
+        self.assertEqual(parse_expr('let x = (* 5 (+ 1 1))'), 
+                         DefineNode('x', OpNode('*', 5, OpNode('+', 1, 1))))
 
     def test_function(self):
-        self.assertEqual(parse_expr('function f x = 10'), DefineNode('f', Function('f', ['x'], [(LOAD_CONST, 10)])))
+        self.assertEqual(parse_expr('function f x = 10'), 
+                         DefineNode('f', Function('f', ['x'], [(LOAD_CONST, 10)])))
 
 
 class ExecTests(unittest.TestCase):
@@ -354,6 +383,10 @@ class ExecTests(unittest.TestCase):
             execute_expr('(f (f 5) 3 5)', env)
 
 
+####################
+#  USER INTERFACE  #
+####################
+
 if __name__ == '__main__':
     aparser = argparse.ArgumentParser()
     aparser.add_argument('--test', default=False, action='store_true', help='Run the test suite')
@@ -375,7 +408,7 @@ if __name__ == '__main__':
                             print(inst, repr(arg))
                 else:
                     try:
-                        res = execute_code(compile_ast(parse_expr(expr)), env)
+                        res = execute_expr(expr, env)
                     except MyError as e:
                         print('Error:', e)
                     else:
