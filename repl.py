@@ -16,7 +16,7 @@ Function = namedtuple('Function', ['parameters', 'code'])
 
 ASTType = Union[OpNode, CallNode, DefineNode, Function, int, str]
 EnvType = Union[Dict[str, int], ChainMap]
-BytecodeType = Tuple[int, Union[Function, int, str, None]]
+BytecodeType = Tuple[str, Union[Function, int, str]]
 
 
 def execute_expr(expr: str, env: EnvType) -> Optional[int]:
@@ -190,18 +190,20 @@ LOAD_NAME     = 'LOAD_NAME'
 CALL_FUNCTION = 'CALL_FUNCTION'
 
 
+# Placeholder value for instructions without arguments.
+NO_ARG = 0
+
+
 def compile_ast(ast: ASTType) -> List[BytecodeType]:
-    """Compile the AST into a list of bytecode instructions of the form (instruction, arg). arg is
-    None if the instruction does not take an argument.
-    """
+    """Compile the AST into a list of bytecode instructions of the form (instruction, arg)."""
     if isinstance(ast, OpNode):
         ret = compile_ast(ast.left) + compile_ast(ast.right)
         if ast.value == '+':
-            ret.append( (BINARY_ADD, None) )
+            ret.append( (BINARY_ADD, NO_ARG) )
         elif ast.value == '-':
-            ret.append( (BINARY_SUB, None) )
+            ret.append( (BINARY_SUB, NO_ARG) )
         elif ast.value == '*':
-            ret.append( (BINARY_MUL, None) )
+            ret.append( (BINARY_MUL, NO_ARG) )
         else:
             raise ValueError('unknown AST value "{}"'.format(ast.value))
         return ret
@@ -210,7 +212,7 @@ def compile_ast(ast: ASTType) -> List[BytecodeType]:
         for arg in reversed(ast.args):
             ret += compile_ast(arg)
         ret.append( (LOAD_NAME, ast.name) )
-        ret.append( (CALL_FUNCTION, None) )
+        ret.append( (CALL_FUNCTION, NO_ARG) )
         return ret
     elif isinstance(ast, DefineNode):
         ret = compile_ast(ast.expr)
