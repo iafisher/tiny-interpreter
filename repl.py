@@ -215,7 +215,7 @@ def compile_ast(ast: ASTType) -> List[BytecodeType]:
         for arg in reversed(ast.args):
             ret += compile_ast(arg)
         ret.append( (LOAD_NAME, ast.name) )
-        ret.append( (CALL_FUNCTION, NO_ARG) )
+        ret.append( (CALL_FUNCTION, len(ast.args)) )
         return ret
     elif isinstance(ast, DefineNode):
         ret = compile_ast(ast.expr)
@@ -256,8 +256,10 @@ def execute_code(codeobj: List[BytecodeType], env: EnvType) -> Optional[int]:
             new_env = ChainMap({}, env)
             function = stack.pop()
             if isinstance(function, Function):
-                if len(stack) < len(function.parameters):
-                    raise MyExecutionError('too few arguments to function "{}"'.format(function.name))
+                # Make sure enough arguments were passed to the function originally.
+                if len(function.parameters) != arg:
+                    msg = 'wrong number of arguments to function "{}"'.format(function.name)
+                    raise MyExecutionError(msg)
                 for param in function.parameters:
                     val = stack.pop()
                     new_env[param] = val
@@ -345,6 +347,11 @@ class ExecTests(unittest.TestCase):
         execute_expr('(f 1 1)', env)
         # Make sure function calls don't overwrite local variables with their parameters.
         self.assertEqual(execute_expr('x', env), 42)
+        # Test wrong number of arguments.
+        with self.assertRaises(MyExecutionError):
+            execute_expr('(f 5)', env)
+        with self.assertRaises(MyExecutionError):
+            execute_expr('(f (f 5) 3 5)', env)
 
 
 if __name__ == '__main__':
