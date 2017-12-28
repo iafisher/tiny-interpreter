@@ -364,14 +364,23 @@ if __name__ == '__main__':
         env = {} # type: EnvType
         try:
             while True:
-                expr = input('>>> ')
-                try:
-                    res = execute_code(compile_ast(parse_expr(expr)), env)
-                except MyError as e:
-                    print('Error:', e)
+                expr = input('>>> ').strip()
+                if expr.startswith('!dis'):
+                    try:
+                        code = compile_ast(parse_expr(expr[4:]))
+                    except MyError as e:
+                        print('Error:', e)
+                    else:
+                        for inst, arg in code:
+                            print(inst, repr(arg))
                 else:
-                    if res is not None:
-                        print(res)
+                    try:
+                        res = execute_code(compile_ast(parse_expr(expr)), env)
+                    except MyError as e:
+                        print('Error:', e)
+                    else:
+                        if res is not None:
+                            print(res)
         except (KeyboardInterrupt, EOFError):
             print()
             pass
