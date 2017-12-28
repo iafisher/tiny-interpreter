@@ -39,15 +39,21 @@ def parse_expr(expr: str) -> ASTType:
     expr -> ( OP expr expr )  |  ( IDENT expr* )  |  NUMBER  |  IDENT
     """
     tz = Tokenizer(expr)
-    token = tz.require_next()
+    token = tz.advance()
     if token.kind in EXPR_FIRST:
-        return match_expr(tz)
+        ret = match_expr(tz)
     elif token.kind == 'LET':
-        return match_define(tz)
+        ret = match_define(tz)
     elif token.kind == 'FUNCTION':
-        return match_function_decl(tz)
+        ret = match_function_decl(tz)
     else:
         raise MyParseError('expected "[", "(", number or identifier, got "{}"'.format(token.value))
+    try:
+        tz.advance()
+    except MyParseError:
+        return ret
+    else:
+        raise MyParseError('trailing input')
 
 
 # The FIRST set of the expr rule: the set of all tokens that could start an expr production.
@@ -56,31 +62,29 @@ EXPR_FIRST = frozenset(['LEFT_PAREN', 'NUMBER', 'IDENT'])
 def match_expr(tz: 'Tokenizer') -> ASTType:
     """Match an expression."""
     if tz.token.kind == 'LEFT_PAREN':
-        op = tz.require_next()
+        op = tz.advance()
         if op.kind == 'OP':
-            tz.require_next()
+            tz.advance()
             left = match_expr(tz)
+            tz.advance()
             right = match_expr(tz)
+            tz.advance()
             if tz.token.kind != 'RIGHT_PAREN':
                 raise MyParseError('expected ")", got "{}"'.format(tz.token.value))
-            tz.optional_next()
             return OpNode(op.value, left, right)
         elif op.kind == 'IDENT':
-            tz.require_next()
+            tz.advance()
             args = match_expr_star(tz)
             if tz.token.kind != 'RIGHT_PAREN':
                 raise MyParseError('expected ")", got "{}"'.format(tz.token.value))
-            tz.optional_next()
             return CallNode(op.value, args)
         else:
             raise MyParseError('expected operator, got "{}"'.format(op.value))
     elif tz.token.kind == 'NUMBER':
         ret = tz.token.value
-        tz.optional_next()
         return int(ret)
     elif tz.token.kind == 'IDENT':
         ret = tz.token.value
-        tz.optional_next()
         return ret
     else:
         raise MyParseError('expected "(" or number, got "{}"'.format(tz.token.value))
@@ -91,37 +95,38 @@ def match_expr_star(tz: 'Tokenizer') -> List[ASTType]:
     ret = []
     while tz.token.kind in EXPR_FIRST:
         ret.append(match_expr(tz))
+        tz.advance()
     return ret
 
 
 def match_define(tz: 'Tokenizer') -> ASTType:
     """Match a define statement."""
-    ident = tz.require_next()
+    ident = tz.advance()
     if ident.kind != 'IDENT':
         raise MyParseError('expected identifier, got "{}"'.format(ident.value))
-    eq = tz.require_next()
+    eq = tz.advance()
     if eq.kind != 'EQ':
         raise MyParseError('expected "=", got "{}"'.format(eq.value))
     # So that the tokenizer will be correctly positioned for match_expr.
-    tz.require_next()
+    tz.advance()
     expr = match_expr(tz)
     return DefineNode(ident.value, expr)
 
 
 def match_function_decl(tz: 'Tokenizer') -> ASTType:
     """Match a function declaration."""
-    name = tz.require_next()
+    name = tz.advance()
     if name.kind != 'IDENT':
         raise MyParseError('expected identifier, got "{}"'.format(name.value))
     parameters = []
-    param = tz.require_next()
+    param = tz.advance()
     while param.kind == 'IDENT':
         parameters.append(param.value)
-        param = tz.require_next()
+        param = tz.advance()
     if param.kind != 'EQ':
         raise MyParseError('expected "=", got "{}"'.format(param.value))
     # So that the tokenizer will be correctly positioned for match_expr.
-    tz.require_next()
+    tz.advance()
     expr = match_expr(tz)
     code = compile_ast(expr)
     return DefineNode(name.value, Function(name.value, parameters, code))
@@ -131,10 +136,6 @@ Token = namedtuple('Token', ['kind', 'value'])
 
 
 class Tokenizer:
-    """An iterator over the tokens of an expression string. After iteration has started, the last
-    token returned by __next__ is available as `self.token`.
-    """
-
     tokens = (
         ('LEFT_PAREN', r'\('),
         ('RIGHT_PAREN', r'\)'),
@@ -156,37 +157,21 @@ class Tokenizer:
         self.it = self.regex.finditer(expr)
         self.token = None # type: Optional[Token]
 
-    def __iter__(self) -> 'Tokenizer':
-        return self
-
-    def __next__(self) -> Token:
-        while True:
-            mo = next(self.it)
-            kind = mo.lastgroup
-            val = mo.group(kind)
-            if kind == 'MISMATCH':
-                raise MyParseError('unexpected character "{}"'.format(val))
-            elif kind != 'SKIP':
-                break
-        self.token = Token(kind, val)
-        return self.token
-
-    def require_next(self) -> Token:
-        """Same as __next__ except raises a useful exception when the iterator is exhausted."""
+    def advance(self) -> Token:
         try:
-            return next(self) # type: ignore
+            while True:
+                mo = next(self.it)
+                kind = mo.lastgroup
+                val = mo.group(kind)
+                if kind == 'MISMATCH':
+                    raise MyParseError('unexpected character "{}"'.format(val))
+                elif kind != 'SKIP':
+                    break
         except StopIteration:
-            raise MyParseError('unexpected end of input') from None
-
-    def optional_next(self) -> Optional[Token]:
-        """Same as __next__ except None is returned on StopIteration."""
-        try:
-            return next(self) # type: ignore
-        except StopIteration:
-            return None
-
-    def __bool__(self) -> bool:
-        return bool(self.it)
+            raise MyParseError('unexpected end of input')
+        else:
+            self.token = Token(kind, val)
+            return self.token
 
 
 #######################
@@ -344,6 +329,21 @@ class ParseTests(unittest.TestCase):
     def test_function(self):
         self.assertEqual(parse_expr('function f x = 10'), 
                          DefineNode('f', Function('f', ['x'], [(LOAD_CONST, 10)])))
+
+    def test_errors(self):
+        # Trailing input is not allowed.
+        with self.assertRaises(MyParseError):
+            parse_expr('1 1')
+        with self.assertRaises(MyParseError):
+            parse_expr('(+ 1 2) 1')
+        with self.assertRaises(MyParseError):
+            parse_expr('let x = 10 11')
+        with self.assertRaises(MyParseError):
+            parse_expr('let x = (* 2 10) 11')
+        with self.assertRaises(MyParseError):
+            parse_expr('function f x = 10 11')
+        with self.assertRaises(MyParseError):
+            parse_expr('function f x = (* 2 10) 11')
 
 
 class ExecTests(unittest.TestCase):
