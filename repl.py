@@ -1,5 +1,23 @@
 #!/usr/bin/env python3
-"""A tiny interpreter for a stupid arithmetic language."""
+"""
+A tiny interpreter for a simple programming language. Includes a parser, bytecode
+compiler, and virtual machine, as well as a full test suite, with no dependencies
+other than Python 3 and the standard library.
+
+Example code:
+
+    >>> let x = 32
+    >>> x
+    32
+    >>> (+ x 10)
+    42
+    >>> function add x y = (+ x y)
+    >>> (add x 10)
+    42
+
+Author:  Ian Fisher (iafisher@protonmail.com)
+Version: May 2019
+"""
 import readline
 import re
 import unittest
@@ -63,7 +81,8 @@ def parse_expr(expr: str) -> ASTType:
         raise MyParseError("trailing input")
 
 
-# The FIRST set of the expr rule: the set of all tokens that could start an expr production.
+# The FIRST set of the expr rule: the set of all tokens that could start an expr
+# production.
 EXPR_FIRST = frozenset(["LEFT_PAREN", "NUMBER", "IDENT"])
 
 
@@ -409,6 +428,34 @@ class ExecTests(unittest.TestCase):
 #  USER INTERFACE  #
 ####################
 
+
+def repl():
+    """Run the read-eval-print loop."""
+    env = {}  # type: EnvType
+    try:
+        while True:
+            expr = input(">>> ").strip()
+            if expr.startswith("!dis"):
+                try:
+                    code = compile_ast(parse_expr(expr[4:]))
+                except MyError as e:
+                    print("Error:", e)
+                else:
+                    for inst, arg in code:
+                        print(inst, repr(arg))
+            else:
+                try:
+                    res = execute_expr(expr, env)
+                except MyError as e:
+                    print("Error:", e)
+                else:
+                    if res is not None:
+                        print(res)
+    except (KeyboardInterrupt, EOFError):
+        print()
+        pass
+
+
 if __name__ == "__main__":
     aparser = argparse.ArgumentParser()
     aparser.add_argument(
@@ -418,26 +465,4 @@ if __name__ == "__main__":
     if args.test:
         unittest.main(argv=sys.argv[:1])
     else:
-        env = {}  # type: EnvType
-        try:
-            while True:
-                expr = input(">>> ").strip()
-                if expr.startswith("!dis"):
-                    try:
-                        code = compile_ast(parse_expr(expr[4:]))
-                    except MyError as e:
-                        print("Error:", e)
-                    else:
-                        for inst, arg in code:
-                            print(inst, repr(arg))
-                else:
-                    try:
-                        res = execute_expr(expr, env)
-                    except MyError as e:
-                        print("Error:", e)
-                    else:
-                        if res is not None:
-                            print(res)
-        except (KeyboardInterrupt, EOFError):
-            print()
-            pass
+        repl()
