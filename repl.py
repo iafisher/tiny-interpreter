@@ -14,6 +14,8 @@ Example code:
     >>> fn add x y = (+ x y)
     >>> (add x 10)
     42
+    >>> if true then 42 else 666 end
+    42
 
 Author:  Ian Fisher (iafisher@protonmail.com)
 Version: May 2019
@@ -59,9 +61,9 @@ def parse_expr(expr: str) -> ASTType:
 
     start     := expr | define
     define    := LET IDENT EQ expr
-    function  := FUNCTION IDENT+ EQ expr
+    function  := FN IDENT+ EQ expr
     if        := IF expr THEN expr ELSE expr END
-    expr      := ( OP expr expr )  |  ( IDENT expr* )  |  NUMBER  |  IDENT
+    expr      := ( OP expr expr )  |  ( IDENT expr* )  | NUMBER | TRUE | FALSE | IDENT
     """
     tz = Tokenizer(expr)
     token = tz.advance()
@@ -69,12 +71,13 @@ def parse_expr(expr: str) -> ASTType:
         ret = match_expr(tz)
     elif token.kind == "LET":
         ret = match_define(tz)
-    elif token.kind == "FUNCTION":
+    elif token.kind == "FN":
         ret = match_function_decl(tz)
     else:
         raise MyParseError(
-            'expected "[", "(", number or identifier, got "{}"'.format(token.value)
+            'expected "(", number or identifier, got "{}"'.format(token.value)
         )
+
     try:
         tz.advance()
     except MyParseError:
@@ -85,7 +88,7 @@ def parse_expr(expr: str) -> ASTType:
 
 # The FIRST set of the expr rule: the set of all tokens that could start an expr
 # production.
-EXPR_FIRST = frozenset(["LEFT_PAREN", "NUMBER", "IDENT"])
+EXPR_FIRST = frozenset(["LEFT_PAREN", "NUMBER", "IDENT", "IF", "TRUE", "FALSE"])
 
 
 def match_expr(tz: "Tokenizer") -> ASTType:
@@ -109,9 +112,30 @@ def match_expr(tz: "Tokenizer") -> ASTType:
             return CallNode(op.value, args)
         else:
             raise MyParseError('expected operator, got "{}"'.format(op.value))
+    elif tz.token.kind == "IF":
+        tz.advance()
+        cond = match_expr(tz)
+        tz.advance()
+        if tz.token.kind != "THEN":
+            raise MyParseError('expected "then", got "{}"'.format(tz.token.value))
+        tz.advance()
+        true_clause = match_expr(tz)
+        tz.advance()
+        if tz.token.kind != "ELSE":
+            raise MyParseError('expected "else", got "{}"'.format(tz.token.value))
+        tz.advance()
+        false_clause = match_expr(tz)
+        tz.advance()
+        if tz.token.kind != "END":
+            raise MyParseError('expected "end", got "{}"'.format(tz.token.value))
+        return IfNode(cond, true_clause, false_clause)
     elif tz.token.kind == "NUMBER":
         ret = tz.token.value
         return int(ret)
+    elif tz.token.kind == "TRUE":
+        return True
+    elif tz.token.kind == "FALSE":
+        return False
     elif tz.token.kind == "IDENT":
         ret = tz.token.value
         return ret
@@ -172,9 +196,6 @@ class Tokenizer:
         ("RIGHT_PAREN", r"\)"),
         ("LEFT_BRACKET", r"\["),
         ("RIGHT_BRACKET", r"\]"),
-        # Keywords must come before IDENT or the latter will override the former.
-        ("LET", r"let"),
-        ("FUNCTION", r"fn"),
         ("IDENT", r"[A-Za-z_]+"),
         ("EQ", r"="),
         ("OP", r"\+|-|\*"),
@@ -182,6 +203,7 @@ class Tokenizer:
         ("SKIP", r"\s"),
         ("MISMATCH", r"."),
     )
+    keywords = frozenset(["let", "fn", "if", "then", "else", "end", "true", "false"])
     regex = re.compile("|".join("(?P<%s>%s)" % tok for tok in tokens))
 
     def __init__(self, expr: str) -> None:
@@ -194,6 +216,9 @@ class Tokenizer:
                 mo = next(self.it)
                 kind = mo.lastgroup
                 val = mo.group(kind)
+                if kind == "IDENT" and val in self.keywords:
+                    kind = val.upper()
+
                 if kind == "MISMATCH":
                     raise MyParseError('unexpected character "{}"'.format(val))
                 elif kind != "SKIP":
@@ -217,6 +242,8 @@ LOAD_CONST = "LOAD_CONST"
 STORE_NAME = "STORE_NAME"
 LOAD_NAME = "LOAD_NAME"
 CALL_FUNCTION = "CALL_FUNCTION"
+POP_JUMP_IF_FALSE = "POP_JUMP_IF_FALSE"
+JUMP_FORWARD = "JUMP_FORWARD"
 
 
 # Placeholder value for instructions without arguments.
@@ -238,6 +265,14 @@ def compile_ast(ast: ASTType) -> List[BytecodeType]:
         else:
             raise ValueError('unknown AST value "{}"'.format(ast.value))
         return ret
+    elif isinstance(ast, IfNode):
+        condition_code = compile_ast(ast.condition)
+        true_code = compile_ast(ast.true_clause)
+        false_code = compile_ast(ast.false_clause)
+
+        true_code.append((JUMP_FORWARD, len(false_code) + 1))
+        condition_code.append((POP_JUMP_IF_FALSE, len(true_code) + 1))
+        return condition_code + true_code + false_code
     elif isinstance(ast, CallNode):
         ret = []
         for arg in reversed(ast.args):
@@ -267,28 +302,44 @@ def compile_ast(ast: ASTType) -> List[BytecodeType]:
 def execute_code(codeobj: List[BytecodeType], env: EnvType) -> Optional[int]:
     """Execute a code object in the given environment."""
     stack = []  # type: List[Any]
-    for inst, arg in codeobj:
+    pc = 0
+    while pc < len(codeobj):
+        inst, arg = codeobj[pc]
         if inst == LOAD_CONST:
             stack.append(arg)
+            pc += 1
         elif inst == BINARY_ADD:
             right = stack.pop()
             left = stack.pop()
             stack.append(left + right)
+            pc += 1
         elif inst == BINARY_SUB:
             right = stack.pop()
             left = stack.pop()
             stack.append(left - right)
+            pc += 1
         elif inst == BINARY_MUL:
             right = stack.pop()
             left = stack.pop()
             stack.append(left * right)
+            pc += 1
         elif inst == STORE_NAME:
             env[cast(str, arg)] = stack.pop()
+            pc += 1
         elif inst == LOAD_NAME:
             try:
                 stack.append(env[cast(str, arg)])
             except KeyError:
                 raise MyExecutionError('unbound identifier "{}"'.format(arg))
+            pc += 1
+        elif inst == POP_JUMP_IF_FALSE:
+            top = stack.pop()
+            if top:
+                pc += 1
+            else:
+                pc += arg
+        elif inst == JUMP_FORWARD:
+            pc += arg
         elif inst == CALL_FUNCTION:
             new_env = ChainMap({}, env)
             function = stack.pop()
@@ -307,6 +358,7 @@ def execute_code(codeobj: List[BytecodeType], env: EnvType) -> Optional[int]:
                     stack.append(res)
             else:
                 raise MyExecutionError("first value of expression must be function")
+            pc += 1
         else:
             raise ValueError('unrecognized bytecode instruction "{}"'.format(inst))
     if stack:
@@ -315,8 +367,9 @@ def execute_code(codeobj: List[BytecodeType], env: EnvType) -> Optional[int]:
         return None
 
 
-# This error hierarchy allows me to distinguish between errors in my code, signalled by regular
-# Python exceptions, and errors in the code being interpreted, signalled by MyError exceptions.
+# This error hierarchy allows me to distinguish between errors in my code, signalled by
+# regular Python exceptions, and errors in the code being interpreted, signalled by
+# MyError exceptions.
 
 
 class MyError(Exception):
@@ -368,7 +421,7 @@ class ParseTests(unittest.TestCase):
     def test_if_else(self):
         self.assertEqual(parse_expr("if x then 42 else 666 end"), IfNode("x", 42, 666))
         self.assertEqual(
-            parse_expr("if x then if y then 42 else 0 else 666 end"),
+            parse_expr("if x then if y then 42 else 0 end else 666 end"),
             IfNode("x", IfNode("y", 42, 0), 666),
         )
 
@@ -421,7 +474,10 @@ class ExecTests(unittest.TestCase):
         self.assertEqual(execute_expr("if true then 42 else 666 end", env), 42)
         self.assertEqual(execute_expr("if false then 666 else 42 end", env), 42)
         self.assertEqual(
-            execute_expr("if (if true then false else true) then 666 else 42", env), 42
+            execute_expr(
+                "if if true then false else true end then 666 else 42 end", env
+            ),
+            42,
         )
 
     def test_function(self):
