@@ -35,6 +35,7 @@ from typing import Union, Dict, Optional, List, Tuple, cast, Any
 OpNode = namedtuple("OpNode", ["value", "left", "right"])
 CallNode = namedtuple("CallNode", ["name", "args"])
 DefineNode = namedtuple("DefineNode", ["symbol", "expr"])
+IfNode = namedtuple("IfNode", ["condition", "true_clause", "false_clause"])
 
 
 class Function(namedtuple("Function", ["name", "parameters", "code"])):
@@ -56,10 +57,11 @@ BytecodeType = Tuple[str, Union[Function, int, str]]
 def parse_expr(expr: str) -> ASTType:
     """Parse the expression string according to this grammar:
 
-    start -> expr | define
-    define -> LET IDENT EQ expr
-    function -> FUNCTION IDENT+ EQ EXPR
-    expr -> ( OP expr expr )  |  ( IDENT expr* )  |  NUMBER  |  IDENT
+    start     := expr | define
+    define    := LET IDENT EQ expr
+    function  := FUNCTION IDENT+ EQ expr
+    if        := IF expr THEN expr ELSE expr END
+    expr      := ( OP expr expr )  |  ( IDENT expr* )  |  NUMBER  |  IDENT
     """
     tz = Tokenizer(expr)
     token = tz.advance()
@@ -363,6 +365,13 @@ class ParseTests(unittest.TestCase):
             DefineNode("x", OpNode("*", 5, OpNode("+", 1, 1))),
         )
 
+    def test_if_else(self):
+        self.assertEqual(parse_expr("if x then 42 else 666 end"), IfNode("x", 42, 666))
+        self.assertEqual(
+            parse_expr("if x then if y then 42 else 0 else 666 end"),
+            IfNode("x", IfNode("y", 42, 0), 666),
+        )
+
     def test_function(self):
         self.assertEqual(
             parse_expr("fn f x = 10"),
@@ -386,6 +395,12 @@ class ParseTests(unittest.TestCase):
 
 
 class ExecTests(unittest.TestCase):
+    def test_atoms(self):
+        env = {}
+        self.assertEqual(execute_expr("42", env), 42)
+        self.assertEqual(execute_expr("true", env), True)
+        self.assertEqual(execute_expr("false", env), False)
+
     def test_arithmetic(self):
         env = {}
         self.assertEqual(execute_expr("(+ 1 1)", env), 2)
@@ -400,6 +415,14 @@ class ExecTests(unittest.TestCase):
         self.assertEqual(execute_expr("let y = (* 5 x)", env), None)
         self.assertEqual(execute_expr("y", env), 50)
         self.assertEqual(execute_expr("(+ 1 y)", env), 51)
+
+    def test_if_else(self):
+        env = {}
+        self.assertEqual(execute_expr("if true then 42 else 666 end", env), 42)
+        self.assertEqual(execute_expr("if false then 666 else 42 end", env), 42)
+        self.assertEqual(
+            execute_expr("if (if true then false else true) then 666 else 42", env), 42
+        )
 
     def test_function(self):
         env = {}
