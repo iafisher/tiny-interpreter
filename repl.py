@@ -56,7 +56,7 @@ EnvType = Union[Dict[str, int], ChainMap]
 BytecodeType = Tuple[str, Union[Function, int, str]]
 
 
-def parse_expr(expr: str) -> ASTType:
+def iparse(expr: str) -> ASTType:
     """Parse the expression string according to this grammar:
 
     start     := expr | define
@@ -74,16 +74,16 @@ def parse_expr(expr: str) -> ASTType:
     elif token.kind == "FN":
         ret = match_function_decl(tz)
     else:
-        raise MyParseError(
+        raise IParseError(
             'expected "(", number or identifier, got "{}"'.format(token.value)
         )
 
     try:
         tz.advance()
-    except MyParseError:
+    except IParseError:
         return ret
     else:
-        raise MyParseError("trailing input")
+        raise IParseError("trailing input")
 
 
 # The FIRST set of the expr rule: the set of all tokens that could start an expr
@@ -102,32 +102,32 @@ def match_expr(tz: "Tokenizer") -> ASTType:
             right = match_expr(tz)
             tz.advance()
             if tz.token.kind != "RIGHT_PAREN":
-                raise MyParseError('expected ")", got "{}"'.format(tz.token.value))
+                raise IParseError('expected ")", got "{}"'.format(tz.token.value))
             return OpNode(op.value, left, right)
         elif op.kind == "IDENT":
             tz.advance()
             args = match_expr_star(tz)
             if tz.token.kind != "RIGHT_PAREN":
-                raise MyParseError('expected ")", got "{}"'.format(tz.token.value))
+                raise IParseError('expected ")", got "{}"'.format(tz.token.value))
             return CallNode(op.value, args)
         else:
-            raise MyParseError('expected operator, got "{}"'.format(op.value))
+            raise IParseError('expected operator, got "{}"'.format(op.value))
     elif tz.token.kind == "IF":
         tz.advance()
         cond = match_expr(tz)
         tz.advance()
         if tz.token.kind != "THEN":
-            raise MyParseError('expected "then", got "{}"'.format(tz.token.value))
+            raise IParseError('expected "then", got "{}"'.format(tz.token.value))
         tz.advance()
         true_clause = match_expr(tz)
         tz.advance()
         if tz.token.kind != "ELSE":
-            raise MyParseError('expected "else", got "{}"'.format(tz.token.value))
+            raise IParseError('expected "else", got "{}"'.format(tz.token.value))
         tz.advance()
         false_clause = match_expr(tz)
         tz.advance()
         if tz.token.kind != "END":
-            raise MyParseError('expected "end", got "{}"'.format(tz.token.value))
+            raise IParseError('expected "end", got "{}"'.format(tz.token.value))
         return IfNode(cond, true_clause, false_clause)
     elif tz.token.kind == "NUMBER":
         ret = tz.token.value
@@ -140,7 +140,7 @@ def match_expr(tz: "Tokenizer") -> ASTType:
         ret = tz.token.value
         return ret
     else:
-        raise MyParseError('expected "(" or number, got "{}"'.format(tz.token.value))
+        raise IParseError('expected "(" or number, got "{}"'.format(tz.token.value))
 
 
 def match_expr_star(tz: "Tokenizer") -> List[ASTType]:
@@ -156,10 +156,10 @@ def match_define(tz: "Tokenizer") -> ASTType:
     """Match a define statement."""
     ident = tz.advance()
     if ident.kind != "IDENT":
-        raise MyParseError('expected identifier, got "{}"'.format(ident.value))
+        raise IParseError('expected identifier, got "{}"'.format(ident.value))
     eq = tz.advance()
     if eq.kind != "EQ":
-        raise MyParseError('expected "=", got "{}"'.format(eq.value))
+        raise IParseError('expected "=", got "{}"'.format(eq.value))
     # So that the tokenizer will be correctly positioned for match_expr.
     tz.advance()
     expr = match_expr(tz)
@@ -170,18 +170,18 @@ def match_function_decl(tz: "Tokenizer") -> ASTType:
     """Match a function declaration."""
     name = tz.advance()
     if name.kind != "IDENT":
-        raise MyParseError('expected identifier, got "{}"'.format(name.value))
+        raise IParseError('expected identifier, got "{}"'.format(name.value))
     parameters = []
     param = tz.advance()
     while param.kind == "IDENT":
         parameters.append(param.value)
         param = tz.advance()
     if param.kind != "EQ":
-        raise MyParseError('expected "=", got "{}"'.format(param.value))
+        raise IParseError('expected "=", got "{}"'.format(param.value))
     # So that the tokenizer will be correctly positioned for match_expr.
     tz.advance()
     expr = match_expr(tz)
-    code = compile_ast(expr)
+    code = icompile(expr)
     return DefineNode(name.value, Function(name.value, parameters, code))
 
 
@@ -220,11 +220,11 @@ class Tokenizer:
                     kind = val.upper()
 
                 if kind == "MISMATCH":
-                    raise MyParseError('unexpected character "{}"'.format(val))
+                    raise IParseError('unexpected character "{}"'.format(val))
                 elif kind != "SKIP":
                     break
         except StopIteration:
-            raise MyParseError("unexpected end of input")
+            raise IParseError("unexpected end of input")
         else:
             self.token = Token(kind, val)
             return self.token
@@ -250,12 +250,12 @@ JUMP_FORWARD = "JUMP_FORWARD"
 NO_ARG = 0
 
 
-def compile_ast(ast: ASTType) -> List[BytecodeType]:
+def icompile(ast: ASTType) -> List[BytecodeType]:
     """
     Compile the AST into a list of bytecode instructions of the form (instruction, arg).
     """
     if isinstance(ast, OpNode):
-        ret = compile_ast(ast.left) + compile_ast(ast.right)
+        ret = icompile(ast.left) + icompile(ast.right)
         if ast.value == "+":
             ret.append((BINARY_ADD, NO_ARG))
         elif ast.value == "-":
@@ -266,9 +266,9 @@ def compile_ast(ast: ASTType) -> List[BytecodeType]:
             raise ValueError('unknown AST value "{}"'.format(ast.value))
         return ret
     elif isinstance(ast, IfNode):
-        condition_code = compile_ast(ast.condition)
-        true_code = compile_ast(ast.true_clause)
-        false_code = compile_ast(ast.false_clause)
+        condition_code = icompile(ast.condition)
+        true_code = icompile(ast.true_clause)
+        false_code = icompile(ast.false_clause)
 
         true_code.append((JUMP_FORWARD, len(false_code) + 1))
         condition_code.append((POP_JUMP_IF_FALSE, len(true_code) + 1))
@@ -276,12 +276,12 @@ def compile_ast(ast: ASTType) -> List[BytecodeType]:
     elif isinstance(ast, CallNode):
         ret = []
         for arg in reversed(ast.args):
-            ret += compile_ast(arg)
+            ret += icompile(arg)
         ret.append((LOAD_NAME, ast.name))
         ret.append((CALL_FUNCTION, len(ast.args)))
         return ret
     elif isinstance(ast, DefineNode):
-        ret = compile_ast(ast.expr)
+        ret = icompile(ast.expr)
         ret.append((STORE_NAME, ast.symbol))
         return ret
     elif isinstance(ast, str):
@@ -299,7 +299,7 @@ def compile_ast(ast: ASTType) -> List[BytecodeType]:
 #####################
 
 
-def execute_code(codeobj: List[BytecodeType], env: EnvType) -> Optional[int]:
+def iexec(codeobj: List[BytecodeType], env: EnvType) -> Optional[int]:
     """Execute a code object in the given environment."""
     stack = []  # type: List[Any]
     pc = 0
@@ -330,7 +330,7 @@ def execute_code(codeobj: List[BytecodeType], env: EnvType) -> Optional[int]:
             try:
                 stack.append(env[cast(str, arg)])
             except KeyError:
-                raise MyExecutionError('unbound identifier "{}"'.format(arg))
+                raise IExecutionError('unbound identifier "{}"'.format(arg))
             pc += 1
         elif inst == POP_JUMP_IF_FALSE:
             top = stack.pop()
@@ -349,15 +349,15 @@ def execute_code(codeobj: List[BytecodeType], env: EnvType) -> Optional[int]:
                     msg = 'wrong number of arguments to function "{}"'.format(
                         function.name
                     )
-                    raise MyExecutionError(msg)
+                    raise IExecutionError(msg)
                 for param in function.parameters:
                     val = stack.pop()
                     new_env[param] = val
-                res = execute_code(function.code, new_env)
+                res = iexec(function.code, new_env)
                 if res is not None:
                     stack.append(res)
             else:
-                raise MyExecutionError("first value of expression must be function")
+                raise IExecutionError("first value of expression must be function")
             pc += 1
         else:
             raise ValueError('unrecognized bytecode instruction "{}"'.format(inst))
@@ -369,24 +369,24 @@ def execute_code(codeobj: List[BytecodeType], env: EnvType) -> Optional[int]:
 
 # This error hierarchy allows me to distinguish between errors in my code, signalled by
 # regular Python exceptions, and errors in the code being interpreted, signalled by
-# MyError exceptions.
+# IError exceptions.
 
 
-class MyError(Exception):
+class IError(Exception):
     pass
 
 
-class MyParseError(MyError):
+class IParseError(IError):
     pass
 
 
-class MyExecutionError(MyError):
+class IExecutionError(IError):
     pass
 
 
-def execute_expr(expr: str, env: EnvType) -> Optional[int]:
+def ieval(expr: str, env: EnvType) -> Optional[int]:
     """A shortcut function to parse, compile and execute an expression."""
-    return execute_code(compile_ast(parse_expr(expr)), env)
+    return iexec(icompile(iparse(expr)), env)
 
 
 ################
@@ -396,109 +396,104 @@ def execute_expr(expr: str, env: EnvType) -> Optional[int]:
 
 class ParseTests(unittest.TestCase):
     def test_expr(self):
-        self.assertEqual(parse_expr("1"), 1)
-        self.assertEqual(parse_expr("x"), "x")
-        self.assertEqual(parse_expr("(+ 8 2)"), OpNode("+", 8, 2))
+        self.assertEqual(iparse("1"), 1)
+        self.assertEqual(iparse("x"), "x")
+        self.assertEqual(iparse("(+ 8 2)"), OpNode("+", 8, 2))
         self.assertEqual(
-            parse_expr("(+ (* 4 2) (- 3 1))"),
+            iparse("(+ (* 4 2) (- 3 1))"),
             OpNode("+", OpNode("*", 4, 2), OpNode("-", 3, 1)),
         )
-        self.assertEqual(parse_expr("(f 1 2 3 4)"), CallNode("f", [1, 2, 3, 4]))
+        self.assertEqual(iparse("(f 1 2 3 4)"), CallNode("f", [1, 2, 3, 4]))
         self.assertEqual(
-            parse_expr("(f 1 (+ 1 1) 3 4)"), CallNode("f", [1, OpNode("+", 1, 1), 3, 4])
+            iparse("(f 1 (+ 1 1) 3 4)"), CallNode("f", [1, OpNode("+", 1, 1), 3, 4])
         )
 
     def test_define(self):
-        self.assertEqual(parse_expr("let x = 10"), DefineNode("x", 10))
+        self.assertEqual(iparse("let x = 10"), DefineNode("x", 10))
+        self.assertEqual(iparse("let x = (* 5 2)"), DefineNode("x", OpNode("*", 5, 2)))
         self.assertEqual(
-            parse_expr("let x = (* 5 2)"), DefineNode("x", OpNode("*", 5, 2))
-        )
-        self.assertEqual(
-            parse_expr("let x = (* 5 (+ 1 1))"),
+            iparse("let x = (* 5 (+ 1 1))"),
             DefineNode("x", OpNode("*", 5, OpNode("+", 1, 1))),
         )
 
     def test_if_else(self):
-        self.assertEqual(parse_expr("if x then 42 else 666 end"), IfNode("x", 42, 666))
+        self.assertEqual(iparse("if x then 42 else 666 end"), IfNode("x", 42, 666))
         self.assertEqual(
-            parse_expr("if x then if y then 42 else 0 end else 666 end"),
+            iparse("if x then if y then 42 else 0 end else 666 end"),
             IfNode("x", IfNode("y", 42, 0), 666),
         )
 
     def test_function(self):
         self.assertEqual(
-            parse_expr("fn f x = 10"),
+            iparse("fn f x = 10"),
             DefineNode("f", Function("f", ["x"], [(LOAD_CONST, 10)])),
         )
 
     def test_errors(self):
         # Trailing input is not allowed.
-        with self.assertRaises(MyParseError):
-            parse_expr("1 1")
-        with self.assertRaises(MyParseError):
-            parse_expr("(+ 1 2) 1")
-        with self.assertRaises(MyParseError):
-            parse_expr("let x = 10 11")
-        with self.assertRaises(MyParseError):
-            parse_expr("let x = (* 2 10) 11")
-        with self.assertRaises(MyParseError):
-            parse_expr("fn f x = 10 11")
-        with self.assertRaises(MyParseError):
-            parse_expr("fn f x = (* 2 10) 11")
+        with self.assertRaises(IParseError):
+            iparse("1 1")
+        with self.assertRaises(IParseError):
+            iparse("(+ 1 2) 1")
+        with self.assertRaises(IParseError):
+            iparse("let x = 10 11")
+        with self.assertRaises(IParseError):
+            iparse("let x = (* 2 10) 11")
+        with self.assertRaises(IParseError):
+            iparse("fn f x = 10 11")
+        with self.assertRaises(IParseError):
+            iparse("fn f x = (* 2 10) 11")
 
 
 class ExecTests(unittest.TestCase):
     def test_atoms(self):
         env = {}
-        self.assertEqual(execute_expr("42", env), 42)
-        self.assertEqual(execute_expr("true", env), True)
-        self.assertEqual(execute_expr("false", env), False)
+        self.assertEqual(ieval("42", env), 42)
+        self.assertEqual(ieval("true", env), True)
+        self.assertEqual(ieval("false", env), False)
 
     def test_arithmetic(self):
         env = {}
-        self.assertEqual(execute_expr("(+ 1 1)", env), 2)
-        self.assertEqual(execute_expr("(+ 31 11)", env), 42)
-        self.assertEqual(execute_expr("(+ (- 33 2) 11)", env), 42)
-        self.assertEqual(execute_expr("(+ (- 33 2) (- (* 10 2) 9))", env), 42)
+        self.assertEqual(ieval("(+ 1 1)", env), 2)
+        self.assertEqual(ieval("(+ 31 11)", env), 42)
+        self.assertEqual(ieval("(+ (- 33 2) 11)", env), 42)
+        self.assertEqual(ieval("(+ (- 33 2) (- (* 10 2) 9))", env), 42)
 
     def test_binding(self):
         env = {}
-        self.assertEqual(execute_expr("let x = 10", env), None)
-        self.assertEqual(execute_expr("x", env), 10)
-        self.assertEqual(execute_expr("let y = (* 5 x)", env), None)
-        self.assertEqual(execute_expr("y", env), 50)
-        self.assertEqual(execute_expr("(+ 1 y)", env), 51)
+        self.assertEqual(ieval("let x = 10", env), None)
+        self.assertEqual(ieval("x", env), 10)
+        self.assertEqual(ieval("let y = (* 5 x)", env), None)
+        self.assertEqual(ieval("y", env), 50)
+        self.assertEqual(ieval("(+ 1 y)", env), 51)
 
     def test_if_else(self):
         env = {}
-        self.assertEqual(execute_expr("if true then 42 else 666 end", env), 42)
-        self.assertEqual(execute_expr("if false then 666 else 42 end", env), 42)
+        self.assertEqual(ieval("if true then 42 else 666 end", env), 42)
+        self.assertEqual(ieval("if false then 666 else 42 end", env), 42)
         self.assertEqual(
-            execute_expr(
-                "if if true then false else true end then 666 else 42 end", env
-            ),
-            42,
+            ieval("if if true then false else true end then 666 else 42 end", env), 42
         )
 
     def test_function(self):
         env = {}
-        self.assertEqual(execute_expr("fn f x y = (* (+ x x) (+ y y))", env), None)
-        self.assertEqual(execute_expr("(f 5 3)", env), 60)
-        self.assertEqual(execute_expr("(f (f (+ 3 2) 3) 3)", env), 720)
+        self.assertEqual(ieval("fn f x y = (* (+ x x) (+ y y))", env), None)
+        self.assertEqual(ieval("(f 5 3)", env), 60)
+        self.assertEqual(ieval("(f (f (+ 3 2) 3) 3)", env), 720)
         # Make sure that function parameters do not have global scope.
-        with self.assertRaises(MyExecutionError):
-            execute_expr("x", env)
-        with self.assertRaises(MyExecutionError):
-            execute_expr("y", env)
-        execute_expr("let x = 42", env)
-        execute_expr("(f 1 1)", env)
+        with self.assertRaises(IExecutionError):
+            ieval("x", env)
+        with self.assertRaises(IExecutionError):
+            ieval("y", env)
+        ieval("let x = 42", env)
+        ieval("(f 1 1)", env)
         # Make sure function calls don't overwrite local variables with their parameters.
-        self.assertEqual(execute_expr("x", env), 42)
+        self.assertEqual(ieval("x", env), 42)
         # Test wrong number of arguments.
-        with self.assertRaises(MyExecutionError):
-            execute_expr("(f 5)", env)
-        with self.assertRaises(MyExecutionError):
-            execute_expr("(f (f 5) 3 5)", env)
+        with self.assertRaises(IExecutionError):
+            ieval("(f 5)", env)
+        with self.assertRaises(IExecutionError):
+            ieval("(f (f 5) 3 5)", env)
 
 
 ####################
@@ -514,16 +509,16 @@ def repl():
             expr = input(">>> ").strip()
             if expr.startswith("!dis"):
                 try:
-                    code = compile_ast(parse_expr(expr[4:]))
-                except MyError as e:
+                    code = icompile(iparse(expr[4:]))
+                except IError as e:
                     print("Error:", e)
                 else:
                     for inst, arg in code:
                         print(inst, repr(arg))
             else:
                 try:
-                    res = execute_expr(expr, env)
-                except MyError as e:
+                    res = ieval(expr, env)
+                except IError as e:
                     print("Error:", e)
                 else:
                     if res is not None:
