@@ -6,7 +6,7 @@ import unittest
 import argparse
 import sys
 from collections import namedtuple, ChainMap
-from typing import Union, Dict, Optional, List, Tuple, cast
+from typing import Union, Dict, Optional, List, Tuple, cast, Any
 
 
 ###################
@@ -19,7 +19,9 @@ CallNode = namedtuple('CallNode', ['name', 'args'])
 DefineNode = namedtuple('DefineNode', ['symbol', 'expr'])
 
 class Function(namedtuple('Function', ['name', 'parameters', 'code'])):
-    """Internal representation of functions. The `name` field is only used for nicer error messages.
+    """
+    Internal representation of functions. The `name` field is only used for nicer error
+    messages.
     """
     def __str__(self):
         return '<function "{0.name}">'.format(self)
@@ -136,6 +138,8 @@ Token = namedtuple('Token', ['kind', 'value'])
 
 
 class Tokenizer:
+    """A class to tokenize strings in the toy language."""
+
     tokens = (
         ('LEFT_PAREN', r'\('),
         ('RIGHT_PAREN', r'\)'),
@@ -193,7 +197,9 @@ NO_ARG = 0
 
 
 def compile_ast(ast: ASTType) -> List[BytecodeType]:
-    """Compile the AST into a list of bytecode instructions of the form (instruction, arg)."""
+    """
+    Compile the AST into a list of bytecode instructions of the form (instruction, arg).
+    """
     if isinstance(ast, OpNode):
         ret = compile_ast(ast.left) + compile_ast(ast.right)
         if ast.value == '+':
@@ -218,8 +224,10 @@ def compile_ast(ast: ASTType) -> List[BytecodeType]:
         return ret
     elif isinstance(ast, str):
         return [(LOAD_NAME, ast)]
-    else:
+    elif isinstance(ast, (Function, int)):
         return [(LOAD_CONST, ast)]
+    else:
+        raise ValueError("don't know how to compile object of type \"{}\"".format(type(ast)))
 
 
 #####################
@@ -228,7 +236,7 @@ def compile_ast(ast: ASTType) -> List[BytecodeType]:
 
 def execute_code(codeobj: List[BytecodeType], env: EnvType) -> Optional[int]:
     """Execute a code object in the given environment."""
-    stack = ExecutionStack()
+    stack = [] # type: List[Any]
     for inst, arg in codeobj:
         if inst == LOAD_CONST:
             stack.append(arg)
@@ -273,18 +281,6 @@ def execute_code(codeobj: List[BytecodeType], env: EnvType) -> Optional[int]:
         return stack.pop()
     else:
         return None
-
-
-class ExecutionStack(list):
-    """A stack class identical to Python lists except ExecutionStack.pop raises a useful exception
-    when the list is empty instead of the generic Python exception.
-    """
-
-    def pop(self, *args, **kwargs):
-        try:
-            return super().pop(*args, **kwargs)
-        except IndexError:
-            raise MyExecutionError('pop from empty stack') from None
 
 
 # This error hierarchy allows me to distinguish between errors in my code, signalled by regular
