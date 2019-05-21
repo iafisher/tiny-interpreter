@@ -11,7 +11,7 @@ Example code:
     32
     >>> (+ x 10)
     42
-    >>> function add x y = (+ x y)
+    >>> fn add x y = (+ x y)
     >>> (add x 10)
     42
 
@@ -172,7 +172,7 @@ class Tokenizer:
         ("RIGHT_BRACKET", r"\]"),
         # Keywords must come before IDENT or the latter will override the former.
         ("LET", r"let"),
-        ("FUNCTION", r"function"),
+        ("FUNCTION", r"fn"),
         ("IDENT", r"[A-Za-z_]+"),
         ("EQ", r"="),
         ("OP", r"\+|-|\*"),
@@ -365,7 +365,7 @@ class ParseTests(unittest.TestCase):
 
     def test_function(self):
         self.assertEqual(
-            parse_expr("function f x = 10"),
+            parse_expr("fn f x = 10"),
             DefineNode("f", Function("f", ["x"], [(LOAD_CONST, 10)])),
         )
 
@@ -380,9 +380,9 @@ class ParseTests(unittest.TestCase):
         with self.assertRaises(MyParseError):
             parse_expr("let x = (* 2 10) 11")
         with self.assertRaises(MyParseError):
-            parse_expr("function f x = 10 11")
+            parse_expr("fn f x = 10 11")
         with self.assertRaises(MyParseError):
-            parse_expr("function f x = (* 2 10) 11")
+            parse_expr("fn f x = (* 2 10) 11")
 
 
 class ExecTests(unittest.TestCase):
@@ -403,9 +403,7 @@ class ExecTests(unittest.TestCase):
 
     def test_function(self):
         env = {}
-        self.assertEqual(
-            execute_expr("function f x y = (* (+ x x) (+ y y))", env), None
-        )
+        self.assertEqual(execute_expr("fn f x y = (* (+ x x) (+ y y))", env), None)
         self.assertEqual(execute_expr("(f 5 3)", env), 60)
         self.assertEqual(execute_expr("(f (f (+ 3 2) 3) 3)", env), 720)
         # Make sure that function parameters do not have global scope.
