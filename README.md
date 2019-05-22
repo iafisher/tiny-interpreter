@@ -12,3 +12,5 @@ A tiny interpreter for a simple programming language. Includes a parser, bytecod
 >>> if true then 42 else 666 end
 42
 ```
+
+The entire interpreter is contained in a single executable Python file, `tiny.py`.
