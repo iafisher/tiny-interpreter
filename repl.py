@@ -5,7 +5,6 @@ compiler, and virtual machine, as well as a full test suite, with no dependencie
 other than Python 3 and the standard library.
 
 Example code:
-
     >>> let x = 32
     >>> x
     32
@@ -20,11 +19,11 @@ Example code:
 Author:  Ian Fisher (iafisher@protonmail.com)
 Version: May 2019
 """
-import readline
-import re
-import unittest
 import argparse
+import re
+import readline
 import sys
+import unittest
 from collections import namedtuple, ChainMap
 from typing import Union, Dict, Optional, List, Tuple, cast, Any
 
@@ -51,7 +50,7 @@ class Function(namedtuple("Function", ["name", "parameters", "code"])):
 
 
 # Type declarations for mypy.
-ASTType = Union[OpNode, CallNode, DefineNode, Function, int, str]
+ASTType = Union[OpNode, CallNode, DefineNode, IfNode, Function, int, str]
 EnvType = Union[Dict[str, int], ChainMap]
 BytecodeType = Tuple[str, Union[Function, int, str]]
 
