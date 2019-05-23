@@ -4,10 +4,10 @@ A tiny interpreter for a simple programming language. Includes a parser, bytecod
 >>> let x = 32
 >>> x
 32
->>> (+ x 10)
+>>> x + 10
 42
->>> fn add x y = (+ x y)
->>> (add x 10)
+>>> fn add(x, y) = x + y
+>>> add(x, 10)
 42
 >>> if true then 42 else 666 end
 42
