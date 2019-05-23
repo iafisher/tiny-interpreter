@@ -25,7 +25,6 @@ import readline
 import sys
 import unittest
 from collections import namedtuple, ChainMap
-from typing import Union, Dict, Optional, List, Tuple, cast, Any
 
 
 ###################
@@ -352,16 +351,6 @@ PREC_MAP = {
 }
 
 
-def wrap(node):
-    """Stringify the parse tree node and wrap it in parentheses if it might be
-    ambiguous.
-    """
-    if isinstance(node, (IntNode, CallNode, SymbolNode)):
-        return str(node)
-    else:
-        return "(" + str(node) + ")"
-
-
 def is_symbol_char(c):
     return c.isdigit() or c.isalpha() or c == "_"
 
@@ -374,11 +363,6 @@ class Function(namedtuple("Function", ["name", "parameters", "code"])):
 
     def __str__(self):
         return f"<function '{self.name}'>"
-
-
-# Type declarations for mypy.
-EnvType = Union[Dict[str, int], ChainMap]
-BytecodeType = Tuple[str, Union[Function, int, str]]
 
 
 #######################
@@ -402,7 +386,7 @@ JUMP_FORWARD = "JUMP_FORWARD"
 NO_ARG = 0
 
 
-def icompile(ast) -> List[BytecodeType]:
+def icompile(ast):
     """
     Compile the AST into a list of bytecode instructions of the form (instruction, arg).
     """
@@ -456,7 +440,7 @@ def icompile(ast) -> List[BytecodeType]:
 #####################
 
 
-def iexec(codeobj: List[BytecodeType], env: EnvType) -> Optional[int]:
+def iexec(codeobj, env):
     """Execute a code object in the given environment."""
     stack = []  # type: List[Any]
     pc = 0
@@ -486,11 +470,11 @@ def iexec(codeobj: List[BytecodeType], env: EnvType) -> Optional[int]:
             stack.append(left / right)
             pc += 1
         elif inst == STORE_NAME:
-            env[cast(str, arg)] = stack.pop()
+            env[arg] = stack.pop()
             pc += 1
         elif inst == LOAD_NAME:
             try:
-                stack.append(env[cast(str, arg)])
+                stack.append(env[arg])
             except KeyError:
                 raise TinyError(f"unbound identifier '{arg}'")
             pc += 1
@@ -531,7 +515,7 @@ class TinyError(Exception):
     pass
 
 
-def ieval(expr: str, env: EnvType) -> Optional[int]:
+def ieval(expr, env):
     """A shortcut function to parse, compile and execute an expression."""
     return iexec(icompile(iparse(expr)), env)
 
