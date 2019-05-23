@@ -158,9 +158,7 @@ class TinyParser:
                 raise TinyError("premature end of input")
             else:
                 raise TinyError(
-                    "unexpected token '{0.value}', line {0.line} col {0.column}".format(
-                        tkn
-                    )
+                    f"unexpected token '{tkn.value}', line {tkn.line} col {tkn.column}"
                 )
 
         return left
@@ -232,10 +230,9 @@ class TinyParser:
             elif self.lexer.tkn.type == "TOKEN_EOF":
                 raise TinyError("premature end of input")
             else:
+                tkn = self.lexer.tkn
                 raise TinyError(
-                    "unexpected token '{0.value}', line {0.line} col {0.column}".format(
-                        self.lexer.tkn
-                    )
+                    f"unexpected token '{tkn.value}', line {tkn.line} col {tkn.column}"
                 )
 
 
@@ -376,7 +373,7 @@ class Function(namedtuple("Function", ["name", "parameters", "code"])):
     """
 
     def __str__(self):
-        return '<function "{0.name}">'.format(self)
+        return f"<function '{self.name}'>"
 
 
 # Type declarations for mypy.
@@ -420,7 +417,7 @@ def icompile(ast) -> List[BytecodeType]:
         elif ast.op == "/":
             ret.append((BINARY_DIV, NO_ARG))
         else:
-            raise RuntimeError("unknown operator '{}'".format(ast.op))
+            raise RuntimeError(f"unknown operator '{ast.op}'")
         return ret
     elif isinstance(ast, IfNode):
         condition_code = icompile(ast.condition)
@@ -451,9 +448,7 @@ def icompile(ast) -> List[BytecodeType]:
     elif isinstance(ast, Function):
         return [(LOAD_CONST, ast)]
     else:
-        raise ValueError(
-            'don\'t know how to compile object of type "{}"'.format(type(ast))
-        )
+        raise RuntimeError(f"don't know how to compile object of type '{type(ast)}'")
 
 
 #####################
@@ -497,7 +492,7 @@ def iexec(codeobj: List[BytecodeType], env: EnvType) -> Optional[int]:
             try:
                 stack.append(env[cast(str, arg)])
             except KeyError:
-                raise TinyError('unbound identifier "{}"'.format(arg))
+                raise TinyError(f"unbound identifier '{arg}'")
             pc += 1
         elif inst == POP_JUMP_IF_FALSE:
             top = stack.pop()
@@ -513,9 +508,7 @@ def iexec(codeobj: List[BytecodeType], env: EnvType) -> Optional[int]:
             if isinstance(function, Function):
                 # Make sure enough arguments were passed to the function originally.
                 if len(function.parameters) != arg:
-                    msg = 'wrong number of arguments to function "{}"'.format(
-                        function.name
-                    )
+                    msg = f"wrong number of arguments to function '{function.name}'"
                     raise TinyError(msg)
                 for param in function.parameters:
                     val = stack.pop()
@@ -527,7 +520,7 @@ def iexec(codeobj: List[BytecodeType], env: EnvType) -> Optional[int]:
                 raise TinyError("first value of expression must be function")
             pc += 1
         else:
-            raise ValueError('unrecognized bytecode instruction "{}"'.format(inst))
+            raise RuntimeError(f"unrecognized bytecode instruction '{inst}'")
     if stack:
         return stack.pop()
     else:
