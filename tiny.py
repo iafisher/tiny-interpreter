@@ -154,9 +154,14 @@ class TinyParser:
         elif tkn.type == "TOKEN_IF":
             left = self.match_if()
         else:
-            raise IParseError(
-                "unexpected token '{0.value}', line {0.line} col {0.column}".format(tkn)
-            )
+            if tkn.type == "TOKEN_EOF":
+                raise TinyError("premature end of input")
+            else:
+                raise TinyError(
+                    "unexpected token '{0.value}', line {0.line} col {0.column}".format(
+                        tkn
+                    )
+                )
 
         return left
 
@@ -223,11 +228,11 @@ class TinyParser:
         """Raise an error if the lexer's current token is not of the given type."""
         if self.lexer.tkn.type != typ:
             if typ == "TOKEN_EOF":
-                raise IParseError("trailing input")
+                raise TinyError("trailing input")
             elif self.lexer.tkn.type == "TOKEN_EOF":
-                raise IParseError("premature end of input")
+                raise TinyError("premature end of input")
             else:
-                raise IParseError(
+                raise TinyError(
                     "unexpected token '{0.value}', line {0.line} col {0.column}".format(
                         self.lexer.tkn
                     )
@@ -492,7 +497,7 @@ def iexec(codeobj: List[BytecodeType], env: EnvType) -> Optional[int]:
             try:
                 stack.append(env[cast(str, arg)])
             except KeyError:
-                raise IExecutionError('unbound identifier "{}"'.format(arg))
+                raise TinyError('unbound identifier "{}"'.format(arg))
             pc += 1
         elif inst == POP_JUMP_IF_FALSE:
             top = stack.pop()
@@ -511,7 +516,7 @@ def iexec(codeobj: List[BytecodeType], env: EnvType) -> Optional[int]:
                     msg = 'wrong number of arguments to function "{}"'.format(
                         function.name
                     )
-                    raise IExecutionError(msg)
+                    raise TinyError(msg)
                 for param in function.parameters:
                     val = stack.pop()
                     new_env[param] = val
@@ -519,7 +524,7 @@ def iexec(codeobj: List[BytecodeType], env: EnvType) -> Optional[int]:
                 if res is not None:
                     stack.append(res)
             else:
-                raise IExecutionError("first value of expression must be function")
+                raise TinyError("first value of expression must be function")
             pc += 1
         else:
             raise ValueError('unrecognized bytecode instruction "{}"'.format(inst))
@@ -529,20 +534,7 @@ def iexec(codeobj: List[BytecodeType], env: EnvType) -> Optional[int]:
         return None
 
 
-# This error hierarchy allows me to distinguish between errors in my code, signalled by
-# regular Python exceptions, and errors in the code being interpreted, signalled by
-# IError exceptions.
-
-
-class IError(Exception):
-    pass
-
-
-class IParseError(IError):
-    pass
-
-
-class IExecutionError(IError):
+class TinyError(Exception):
     pass
 
 
@@ -591,17 +583,17 @@ class ParseTests(unittest.TestCase):
 
     def test_errors(self):
         # Trailing input is not allowed.
-        with self.assertRaises(IParseError):
+        with self.assertRaises(TinyError):
             iparse("1 1")
-        with self.assertRaises(IParseError):
+        with self.assertRaises(TinyError):
             iparse("1 + 2   1")
-        with self.assertRaises(IParseError):
+        with self.assertRaises(TinyError):
             iparse("let x = 10   11")
-        with self.assertRaises(IParseError):
+        with self.assertRaises(TinyError):
             iparse("let x = 2 * 10    11")
-        with self.assertRaises(IParseError):
+        with self.assertRaises(TinyError):
             iparse("fn f(x) = 10   11")
-        with self.assertRaises(IParseError):
+        with self.assertRaises(TinyError):
             iparse("fn f(x) = 2 * 10    11")
 
 
@@ -642,18 +634,18 @@ class ExecTests(unittest.TestCase):
         self.assertEqual(ieval("f(5, 3)", env), 60)
         self.assertEqual(ieval("f(f(3 + 2, 3), 3)", env), 720)
         # Make sure that function parameters do not have global scope.
-        with self.assertRaises(IExecutionError):
+        with self.assertRaises(TinyError):
             ieval("x", env)
-        with self.assertRaises(IExecutionError):
+        with self.assertRaises(TinyError):
             ieval("y", env)
         ieval("let x = 42", env)
         ieval("f(1, 1)", env)
         # Make sure function calls don't overwrite local variables with their parameters.
         self.assertEqual(ieval("x", env), 42)
         # Test wrong number of arguments.
-        with self.assertRaises(IExecutionError):
+        with self.assertRaises(TinyError):
             ieval("f(5)", env)
-        with self.assertRaises(IExecutionError):
+        with self.assertRaises(TinyError):
             ieval("f(f(5), 3, 5)", env)
 
 
@@ -671,7 +663,7 @@ def repl():
             if expr.startswith("!dis"):
                 try:
                     code = icompile(iparse(expr[4:]))
-                except IError as e:
+                except TinyError as e:
                     print("Error:", e)
                 else:
                     for inst, arg in code:
@@ -679,7 +671,7 @@ def repl():
             else:
                 try:
                     res = ieval(expr, env)
-                except IError as e:
+                except TinyError as e:
                     print("Error:", e)
                 else:
                     if res is not None:
