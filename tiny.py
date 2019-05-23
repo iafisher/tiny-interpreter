@@ -387,6 +387,7 @@ BytecodeType = Tuple[str, Union[Function, int, str]]
 BINARY_ADD = "BINARY_ADD"
 BINARY_SUB = "BINARY_SUB"
 BINARY_MUL = "BINARY_MUL"
+BINARY_DIV = "BINARY_DIV"
 LOAD_CONST = "LOAD_CONST"
 STORE_NAME = "STORE_NAME"
 LOAD_NAME = "LOAD_NAME"
@@ -411,6 +412,8 @@ def icompile(ast) -> List[BytecodeType]:
             ret.append((BINARY_SUB, NO_ARG))
         elif ast.op == "*":
             ret.append((BINARY_MUL, NO_ARG))
+        elif ast.op == "/":
+            ret.append((BINARY_DIV, NO_ARG))
         else:
             raise RuntimeError("unknown operator '{}'".format(ast.op))
         return ret
@@ -476,6 +479,11 @@ def iexec(codeobj: List[BytecodeType], env: EnvType) -> Optional[int]:
             right = stack.pop()
             left = stack.pop()
             stack.append(left * right)
+            pc += 1
+        elif inst == BINARY_DIV:
+            right = stack.pop()
+            left = stack.pop()
+            stack.append(left / right)
             pc += 1
         elif inst == STORE_NAME:
             env[cast(str, arg)] = stack.pop()
@@ -610,6 +618,7 @@ class ExecTests(unittest.TestCase):
         self.assertEqual(ieval("31 + 11", env), 42)
         self.assertEqual(ieval("(33 - 2) + 11", env), 42)
         self.assertEqual(ieval("(33 - 2) + 10 * 2 - 9", env), 42)
+        self.assertEqual(ieval("42 / 9", env), 42 / 9)
 
     def test_binding(self):
         env = {}
