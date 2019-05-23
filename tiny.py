@@ -8,10 +8,10 @@ Example code:
     >>> let x = 32
     >>> x
     32
-    >>> (+ x 10)
+    >>> x + 10
     42
-    >>> fn add x y = (+ x y)
-    >>> (add x 10)
+    >>> fn add(x, y) = x + y
+    >>> add(x, 10)
     42
     >>> if true then 42 else 666 end
     42
@@ -32,16 +32,341 @@ from typing import Union, Dict, Optional, List, Tuple, cast, Any
 #  PARSING STAGE  #
 ###################
 
-# Node types returned by the parser.
-OpNode = namedtuple("OpNode", ["value", "left", "right"])
+
+def iparse(text):
+    """
+    Parse the expression string according to this grammar:
+
+    start     := expr | define
+    define    := LET IDENT EQ expr
+    function  := FN IDENT LPAREN params RPAREN EQ expr
+    if        := IF expr THEN expr ELSE expr END
+    expr      := expr OP expr  | call | NUMBER | TRUE | FALSE | IDENT
+
+    call      := IDENT LPAREN args RPAREN
+    args      := expr | expr COMMA args
+    params    := IDENT | IDENT COMMA params
+
+    Operators have the following precedence:
+      1. *, /
+      2. +, -
+    """
+    return TinyParser(TinyLexer(text)).parse()
+
+
+class TinyParser:
+    """
+    The parser for the tiny language.
+
+    All match_* functions assume that self.lexer.tkn is set at the first token of the
+    expression to be matched, and they all leave self.lexer.tkn at one token past the
+    end of the matched expression.
+    """
+
+    def __init__(self, lexer):
+        self.lexer = lexer
+
+    def parse(self):
+        if self.lexer.tkn.type == "TOKEN_LET":
+            tree = self.match_let()
+        elif self.lexer.tkn.type == "TOKEN_FN":
+            tree = self.match_fn()
+        else:
+            tree = self.match_expr(PREC_LOWEST)
+
+        self.expect("TOKEN_EOF")
+        return tree
+
+    def match_let(self):
+        """Match a let statement."""
+        self.expect("TOKEN_LET")
+        self.lexer.next_token()
+
+        self.expect("TOKEN_SYMBOL")
+        sym = self.lexer.tkn.value
+        self.lexer.next_token()
+
+        self.expect("TOKEN_ASSIGN")
+        self.lexer.next_token()
+
+        rhs = self.match_expr(PREC_LOWEST)
+        return LetNode(sym, rhs)
+
+    def match_fn(self):
+        """Match a function declaration."""
+        self.expect("TOKEN_FN")
+        self.lexer.next_token()
+
+        self.expect("TOKEN_SYMBOL")
+        sym = self.lexer.tkn.value
+        self.lexer.next_token()
+
+        self.expect("TOKEN_LPAREN")
+        self.lexer.next_token()
+        params = self.match_params()
+        self.expect("TOKEN_RPAREN")
+        self.lexer.next_token()
+
+        self.expect("TOKEN_ASSIGN")
+        self.lexer.next_token()
+
+        body = self.match_expr(PREC_LOWEST)
+        return FnNode(sym, params, body)
+
+    def match_expr(self, prec):
+        """
+        Match an expression, assuming that self.lexer.tkn is set at the first token of
+        the expression.
+
+        On exit, self.lexer.tkn will be set to the first token of the next expression.
+        """
+        left = self.match_prefix()
+
+        tkn = self.lexer.tkn
+        while tkn.type in PREC_MAP and prec < PREC_MAP[tkn.type]:
+            left = self.match_infix(left, PREC_MAP[tkn.type])
+            tkn = self.lexer.tkn
+        return left
+
+    def match_prefix(self):
+        """Match a non-infix expression."""
+        tkn = self.lexer.tkn
+        if tkn.type == "TOKEN_INT":
+            left = int(tkn.value)
+            self.lexer.next_token()
+        elif tkn.type == "TOKEN_TRUE":
+            left = True
+            self.lexer.next_token()
+        elif tkn.type == "TOKEN_FALSE":
+            left = False
+            self.lexer.next_token()
+        elif tkn.type == "TOKEN_SYMBOL":
+            left = tkn.value
+            self.lexer.next_token()
+        elif tkn.type == "TOKEN_LPAREN":
+            self.lexer.next_token()
+            left = self.match_expr(PREC_LOWEST)
+            self.expect("TOKEN_RPAREN")
+            self.lexer.next_token()
+        elif tkn.type == "TOKEN_MINUS":
+            self.lexer.next_token()
+            left = PrefixNode("-", self.match_expr(PREC_PREFIX))
+        elif tkn.type == "TOKEN_IF":
+            left = self.match_if()
+        else:
+            raise IParseError(
+                "unexpected token '{0.value}', line {0.line} col {0.column}".format(tkn)
+            )
+
+        return left
+
+    def match_infix(self, left, prec):
+        """Match the right half of an infix expression."""
+        tkn = self.lexer.tkn
+        self.lexer.next_token()
+
+        if tkn.type == "TOKEN_LPAREN":
+            args = self.match_args()
+            self.expect("TOKEN_RPAREN")
+            self.lexer.next_token()
+            return CallNode(left, args)
+        else:
+            right = self.match_expr(prec)
+            return InfixNode(tkn.value, left, right)
+
+    def match_if(self):
+        self.expect("TOKEN_IF")
+        self.lexer.next_token()
+
+        condition = self.match_expr(PREC_LOWEST)
+        self.expect("TOKEN_THEN")
+        self.lexer.next_token()
+
+        true_clause = self.match_expr(PREC_LOWEST)
+        self.expect("TOKEN_ELSE")
+        self.lexer.next_token()
+
+        false_clause = self.match_expr(PREC_LOWEST)
+        self.expect("TOKEN_END")
+        self.lexer.next_token()
+
+        return IfNode(condition, true_clause, false_clause)
+
+    def match_args(self):
+        """Match the argument list of a call expression."""
+        args = []
+        while True:
+            arg = self.match_expr(PREC_LOWEST)
+            args.append(arg)
+
+            if self.lexer.tkn.type == "TOKEN_COMMA":
+                self.lexer.next_token()
+            else:
+                break
+        return args
+
+    def match_params(self):
+        """Match the parameter list of a function declaration."""
+        params = []
+        while True:
+            self.expect("TOKEN_SYMBOL")
+            params.append(self.lexer.tkn.value)
+
+            self.lexer.next_token()
+            if self.lexer.tkn.type == "TOKEN_COMMA":
+                self.lexer.next_token()
+            else:
+                break
+        return params
+
+    def expect(self, typ):
+        """Raise an error if the lexer's current token is not of the given type."""
+        if self.lexer.tkn.type != typ:
+            if typ == "TOKEN_EOF":
+                raise IParseError("trailing input")
+            elif self.lexer.tkn.type == "TOKEN_EOF":
+                raise IParseError("premature end of input")
+            else:
+                raise IParseError(
+                    "unexpected token '{0.value}', line {0.line} col {0.column}".format(
+                        self.lexer.tkn
+                    )
+                )
+
+
 CallNode = namedtuple("CallNode", ["name", "args"])
-DefineNode = namedtuple("DefineNode", ["symbol", "expr"])
+InfixNode = namedtuple("InfixNode", ["op", "left", "right"])
+PrefixNode = namedtuple("PrefixNode", ["op", "operand"])
+LetNode = namedtuple("LetNode", ["symbol", "expr"])
+FnNode = namedtuple("FnNode", ["symbol", "params", "body"])
 IfNode = namedtuple("IfNode", ["condition", "true_clause", "false_clause"])
+
+
+class TinyLexer:
+    """
+    The lexer for the tiny language.
+
+    The parser drives the lexical analysis by calling the next_token method.
+    """
+
+    keywords = frozenset(["fn", "let", "if", "then", "else", "end", "true", "false"])
+
+    def __init__(self, text):
+        self.text = text
+        self.position = 0
+        self.column = 1
+        self.line = 1
+        # Set the current token.
+        self.next_token()
+
+    def next_token(self):
+        self.skip_whitespace()
+
+        if self.position >= len(self.text):
+            self.set_token("TOKEN_EOF", 0)
+        else:
+            ch = self.text[self.position]
+            if ch.isalpha() or ch == "_":
+                length = self.read_symbol()
+                value = self.text[self.position : self.position + length]
+                if value in self.keywords:
+                    self.set_token("TOKEN_" + value.upper(), length)
+                else:
+                    self.set_token("TOKEN_SYMBOL", length)
+            elif ch.isdigit():
+                length = self.read_int()
+                self.set_token("TOKEN_INT", length)
+            elif ch == "(":
+                self.set_token("TOKEN_LPAREN", 1)
+            elif ch == ")":
+                self.set_token("TOKEN_RPAREN", 1)
+            elif ch == ",":
+                self.set_token("TOKEN_COMMA", 1)
+            elif ch == "+":
+                self.set_token("TOKEN_PLUS", 1)
+            elif ch == "*":
+                self.set_token("TOKEN_ASTERISK", 1)
+            elif ch == "-":
+                self.set_token("TOKEN_MINUS", 1)
+            elif ch == "/":
+                self.set_token("TOKEN_SLASH", 1)
+            elif ch == "=":
+                self.set_token("TOKEN_ASSIGN", 1)
+            else:
+                self.set_token("TOKEN_UNKNOWN", 1)
+
+        return self.tkn
+
+    def skip_whitespace(self):
+        while self.position < len(self.text) and self.text[self.position].isspace():
+            self.next_char()
+
+    def read_symbol(self):
+        end = self.position + 1
+        while end < len(self.text) and is_symbol_char(self.text[end]):
+            end += 1
+        return end - self.position
+
+    def read_int(self):
+        end = self.position + 1
+        while end < len(self.text) and self.text[end].isdigit():
+            end += 1
+        return end - self.position
+
+    def next_char(self):
+        if self.text[self.position] == "\n":
+            self.line += 1
+            self.column = 1
+        else:
+            self.column += 1
+        self.position += 1
+
+    def set_token(self, typ, length):
+        value = self.text[self.position : self.position + length]
+        self.tkn = Token(typ, value, self.line, self.column)
+
+        # We can't just do self.position += length because self.line and self.column
+        # would no longer be accurate.
+        for _ in range(length):
+            self.next_char()
+
+
+Token = namedtuple("Token", ["type", "value", "line", "column"])
+
+
+PREC_LOWEST = 0
+PREC_ADD_SUB = 1
+PREC_MUL_DIV = 2
+PREC_PREFIX = 3
+PREC_CALL = 4
+
+PREC_MAP = {
+    "TOKEN_PLUS": PREC_ADD_SUB,
+    "TOKEN_MINUS": PREC_ADD_SUB,
+    "TOKEN_ASTERISK": PREC_MUL_DIV,
+    "TOKEN_SLASH": PREC_MUL_DIV,
+    # The left parenthesis is the "infix operator" for function-call expressions.
+    "TOKEN_LPAREN": PREC_CALL,
+}
+
+
+def wrap(node):
+    """Stringify the parse tree node and wrap it in parentheses if it might be
+    ambiguous.
+    """
+    if isinstance(node, (IntNode, CallNode, SymbolNode)):
+        return str(node)
+    else:
+        return "(" + str(node) + ")"
+
+
+def is_symbol_char(c):
+    return c.isdigit() or c.isalpha() or c == "_"
 
 
 class Function(namedtuple("Function", ["name", "parameters", "code"])):
     """
-    Internal representation of functions. The `name` field is only used for nicer error
+    Internal representation of functions. The `name` field is only used for error
     messages.
     """
 
@@ -50,183 +375,8 @@ class Function(namedtuple("Function", ["name", "parameters", "code"])):
 
 
 # Type declarations for mypy.
-ASTType = Union[OpNode, CallNode, DefineNode, IfNode, Function, int, str]
 EnvType = Union[Dict[str, int], ChainMap]
 BytecodeType = Tuple[str, Union[Function, int, str]]
-
-
-def iparse(expr: str) -> ASTType:
-    """Parse the expression string according to this grammar:
-
-    start     := expr | define
-    define    := LET IDENT EQ expr
-    function  := FN IDENT+ EQ expr
-    if        := IF expr THEN expr ELSE expr END
-    expr      := ( OP expr expr )  |  ( IDENT expr* )  | NUMBER | TRUE | FALSE | IDENT
-    """
-    tz = Tokenizer(expr)
-    token = tz.advance()
-    if token.kind in EXPR_FIRST:
-        ret = match_expr(tz)
-    elif token.kind == "LET":
-        ret = match_define(tz)
-    elif token.kind == "FN":
-        ret = match_function_decl(tz)
-    else:
-        raise IParseError(
-            'expected "(", number or identifier, got "{}"'.format(token.value)
-        )
-
-    try:
-        tz.advance()
-    except IParseError:
-        return ret
-    else:
-        raise IParseError("trailing input")
-
-
-# The FIRST set of the expr rule: the set of all tokens that could start an expr
-# production.
-EXPR_FIRST = frozenset(["LEFT_PAREN", "NUMBER", "IDENT", "IF", "TRUE", "FALSE"])
-
-
-def match_expr(tz: "Tokenizer") -> ASTType:
-    """Match an expression."""
-    if tz.token.kind == "LEFT_PAREN":
-        op = tz.advance()
-        if op.kind == "OP":
-            tz.advance()
-            left = match_expr(tz)
-            tz.advance()
-            right = match_expr(tz)
-            tz.advance()
-            if tz.token.kind != "RIGHT_PAREN":
-                raise IParseError('expected ")", got "{}"'.format(tz.token.value))
-            return OpNode(op.value, left, right)
-        elif op.kind == "IDENT":
-            tz.advance()
-            args = match_expr_star(tz)
-            if tz.token.kind != "RIGHT_PAREN":
-                raise IParseError('expected ")", got "{}"'.format(tz.token.value))
-            return CallNode(op.value, args)
-        else:
-            raise IParseError('expected operator, got "{}"'.format(op.value))
-    elif tz.token.kind == "IF":
-        tz.advance()
-        cond = match_expr(tz)
-        tz.advance()
-        if tz.token.kind != "THEN":
-            raise IParseError('expected "then", got "{}"'.format(tz.token.value))
-        tz.advance()
-        true_clause = match_expr(tz)
-        tz.advance()
-        if tz.token.kind != "ELSE":
-            raise IParseError('expected "else", got "{}"'.format(tz.token.value))
-        tz.advance()
-        false_clause = match_expr(tz)
-        tz.advance()
-        if tz.token.kind != "END":
-            raise IParseError('expected "end", got "{}"'.format(tz.token.value))
-        return IfNode(cond, true_clause, false_clause)
-    elif tz.token.kind == "NUMBER":
-        ret = tz.token.value
-        return int(ret)
-    elif tz.token.kind == "TRUE":
-        return True
-    elif tz.token.kind == "FALSE":
-        return False
-    elif tz.token.kind == "IDENT":
-        ret = tz.token.value
-        return ret
-    else:
-        raise IParseError('expected "(" or number, got "{}"'.format(tz.token.value))
-
-
-def match_expr_star(tz: "Tokenizer") -> List[ASTType]:
-    """Match zero or more expressions."""
-    ret = []
-    while tz.token.kind in EXPR_FIRST:
-        ret.append(match_expr(tz))
-        tz.advance()
-    return ret
-
-
-def match_define(tz: "Tokenizer") -> ASTType:
-    """Match a define statement."""
-    ident = tz.advance()
-    if ident.kind != "IDENT":
-        raise IParseError('expected identifier, got "{}"'.format(ident.value))
-    eq = tz.advance()
-    if eq.kind != "EQ":
-        raise IParseError('expected "=", got "{}"'.format(eq.value))
-    # So that the tokenizer will be correctly positioned for match_expr.
-    tz.advance()
-    expr = match_expr(tz)
-    return DefineNode(ident.value, expr)
-
-
-def match_function_decl(tz: "Tokenizer") -> ASTType:
-    """Match a function declaration."""
-    name = tz.advance()
-    if name.kind != "IDENT":
-        raise IParseError('expected identifier, got "{}"'.format(name.value))
-    parameters = []
-    param = tz.advance()
-    while param.kind == "IDENT":
-        parameters.append(param.value)
-        param = tz.advance()
-    if param.kind != "EQ":
-        raise IParseError('expected "=", got "{}"'.format(param.value))
-    # So that the tokenizer will be correctly positioned for match_expr.
-    tz.advance()
-    expr = match_expr(tz)
-    code = icompile(expr)
-    return DefineNode(name.value, Function(name.value, parameters, code))
-
-
-Token = namedtuple("Token", ["kind", "value"])
-
-
-class Tokenizer:
-    """A class to tokenize strings in the toy language."""
-
-    tokens = (
-        ("LEFT_PAREN", r"\("),
-        ("RIGHT_PAREN", r"\)"),
-        ("LEFT_BRACKET", r"\["),
-        ("RIGHT_BRACKET", r"\]"),
-        ("IDENT", r"[A-Za-z_]+"),
-        ("EQ", r"="),
-        ("OP", r"\+|-|\*"),
-        ("NUMBER", r"[0-9]+"),
-        ("SKIP", r"\s"),
-        ("MISMATCH", r"."),
-    )
-    keywords = frozenset(["let", "fn", "if", "then", "else", "end", "true", "false"])
-    regex = re.compile("|".join("(?P<%s>%s)" % tok for tok in tokens))
-
-    def __init__(self, expr: str) -> None:
-        self.it = self.regex.finditer(expr)
-        self.token = None  # type: Optional[Token]
-
-    def advance(self) -> Token:
-        try:
-            while True:
-                mo = next(self.it)
-                kind = mo.lastgroup
-                val = mo.group(kind)
-                if kind == "IDENT" and val in self.keywords:
-                    kind = val.upper()
-
-                if kind == "MISMATCH":
-                    raise IParseError('unexpected character "{}"'.format(val))
-                elif kind != "SKIP":
-                    break
-        except StopIteration:
-            raise IParseError("unexpected end of input")
-        else:
-            self.token = Token(kind, val)
-            return self.token
 
 
 #######################
@@ -249,20 +399,20 @@ JUMP_FORWARD = "JUMP_FORWARD"
 NO_ARG = 0
 
 
-def icompile(ast: ASTType) -> List[BytecodeType]:
+def icompile(ast) -> List[BytecodeType]:
     """
     Compile the AST into a list of bytecode instructions of the form (instruction, arg).
     """
-    if isinstance(ast, OpNode):
+    if isinstance(ast, InfixNode):
         ret = icompile(ast.left) + icompile(ast.right)
-        if ast.value == "+":
+        if ast.op == "+":
             ret.append((BINARY_ADD, NO_ARG))
-        elif ast.value == "-":
+        elif ast.op == "-":
             ret.append((BINARY_SUB, NO_ARG))
-        elif ast.value == "*":
+        elif ast.op == "*":
             ret.append((BINARY_MUL, NO_ARG))
         else:
-            raise ValueError('unknown AST value "{}"'.format(ast.value))
+            raise RuntimeError("unknown operator '{}'".format(ast.op))
         return ret
     elif isinstance(ast, IfNode):
         condition_code = icompile(ast.condition)
@@ -279,13 +429,18 @@ def icompile(ast: ASTType) -> List[BytecodeType]:
         ret.append((LOAD_NAME, ast.name))
         ret.append((CALL_FUNCTION, len(ast.args)))
         return ret
-    elif isinstance(ast, DefineNode):
+    elif isinstance(ast, LetNode):
         ret = icompile(ast.expr)
         ret.append((STORE_NAME, ast.symbol))
         return ret
+    elif isinstance(ast, FnNode):
+        f = Function(ast.symbol, ast.params, icompile(ast.body))
+        return [(LOAD_CONST, f), (STORE_NAME, ast.symbol)]
     elif isinstance(ast, str):
         return [(LOAD_NAME, ast)]
-    elif isinstance(ast, (Function, int)):
+    elif isinstance(ast, int):
+        return [(LOAD_CONST, ast)]
+    elif isinstance(ast, Function):
         return [(LOAD_CONST, ast)]
     else:
         raise ValueError(
@@ -397,22 +552,23 @@ class ParseTests(unittest.TestCase):
     def test_expr(self):
         self.assertEqual(iparse("1"), 1)
         self.assertEqual(iparse("x"), "x")
-        self.assertEqual(iparse("(+ 8 2)"), OpNode("+", 8, 2))
+        self.assertEqual(iparse("8 + 2"), InfixNode("+", 8, 2))
         self.assertEqual(
-            iparse("(+ (* 4 2) (- 3 1))"),
-            OpNode("+", OpNode("*", 4, 2), OpNode("-", 3, 1)),
+            iparse("((4 * 2) + (3 - 1))"),
+            InfixNode("+", InfixNode("*", 4, 2), InfixNode("-", 3, 1)),
         )
-        self.assertEqual(iparse("(f 1 2 3 4)"), CallNode("f", [1, 2, 3, 4]))
+        self.assertEqual(iparse("f(1, 2, 3, 4)"), CallNode("f", [1, 2, 3, 4]))
         self.assertEqual(
-            iparse("(f 1 (+ 1 1) 3 4)"), CallNode("f", [1, OpNode("+", 1, 1), 3, 4])
+            iparse("f(1, (1 + 1), 3, 4)"),
+            CallNode("f", [1, InfixNode("+", 1, 1), 3, 4]),
         )
 
     def test_define(self):
-        self.assertEqual(iparse("let x = 10"), DefineNode("x", 10))
-        self.assertEqual(iparse("let x = (* 5 2)"), DefineNode("x", OpNode("*", 5, 2)))
+        self.assertEqual(iparse("let x = 10"), LetNode("x", 10))
+        self.assertEqual(iparse("let x = 5 * 2"), LetNode("x", InfixNode("*", 5, 2)))
         self.assertEqual(
-            iparse("let x = (* 5 (+ 1 1))"),
-            DefineNode("x", OpNode("*", 5, OpNode("+", 1, 1))),
+            iparse("let x = 5 * (1 + 1)"),
+            LetNode("x", InfixNode("*", 5, InfixNode("+", 1, 1))),
         )
 
     def test_if_else(self):
@@ -423,25 +579,22 @@ class ParseTests(unittest.TestCase):
         )
 
     def test_function(self):
-        self.assertEqual(
-            iparse("fn f x = 10"),
-            DefineNode("f", Function("f", ["x"], [(LOAD_CONST, 10)])),
-        )
+        self.assertEqual(iparse("fn f(x) = 10"), FnNode("f", ["x"], 10))
 
     def test_errors(self):
         # Trailing input is not allowed.
         with self.assertRaises(IParseError):
             iparse("1 1")
         with self.assertRaises(IParseError):
-            iparse("(+ 1 2) 1")
+            iparse("1 + 2   1")
         with self.assertRaises(IParseError):
-            iparse("let x = 10 11")
+            iparse("let x = 10   11")
         with self.assertRaises(IParseError):
-            iparse("let x = (* 2 10) 11")
+            iparse("let x = 2 * 10    11")
         with self.assertRaises(IParseError):
-            iparse("fn f x = 10 11")
+            iparse("fn f(x) = 10   11")
         with self.assertRaises(IParseError):
-            iparse("fn f x = (* 2 10) 11")
+            iparse("fn f(x) = 2 * 10    11")
 
 
 class ExecTests(unittest.TestCase):
@@ -453,18 +606,18 @@ class ExecTests(unittest.TestCase):
 
     def test_arithmetic(self):
         env = {}
-        self.assertEqual(ieval("(+ 1 1)", env), 2)
-        self.assertEqual(ieval("(+ 31 11)", env), 42)
-        self.assertEqual(ieval("(+ (- 33 2) 11)", env), 42)
-        self.assertEqual(ieval("(+ (- 33 2) (- (* 10 2) 9))", env), 42)
+        self.assertEqual(ieval("1 + 1", env), 2)
+        self.assertEqual(ieval("31 + 11", env), 42)
+        self.assertEqual(ieval("(33 - 2) + 11", env), 42)
+        self.assertEqual(ieval("(33 - 2) + 10 * 2 - 9", env), 42)
 
     def test_binding(self):
         env = {}
         self.assertEqual(ieval("let x = 10", env), None)
         self.assertEqual(ieval("x", env), 10)
-        self.assertEqual(ieval("let y = (* 5 x)", env), None)
+        self.assertEqual(ieval("let y = 5 * x", env), None)
         self.assertEqual(ieval("y", env), 50)
-        self.assertEqual(ieval("(+ 1 y)", env), 51)
+        self.assertEqual(ieval("1 + y", env), 51)
 
     def test_if_else(self):
         env = {}
@@ -476,23 +629,23 @@ class ExecTests(unittest.TestCase):
 
     def test_function(self):
         env = {}
-        self.assertEqual(ieval("fn f x y = (* (+ x x) (+ y y))", env), None)
-        self.assertEqual(ieval("(f 5 3)", env), 60)
-        self.assertEqual(ieval("(f (f (+ 3 2) 3) 3)", env), 720)
+        self.assertEqual(ieval("fn f(x, y) = (x + x) * (y + y)", env), None)
+        self.assertEqual(ieval("f(5, 3)", env), 60)
+        self.assertEqual(ieval("f(f(3 + 2, 3), 3)", env), 720)
         # Make sure that function parameters do not have global scope.
         with self.assertRaises(IExecutionError):
             ieval("x", env)
         with self.assertRaises(IExecutionError):
             ieval("y", env)
         ieval("let x = 42", env)
-        ieval("(f 1 1)", env)
+        ieval("f(1, 1)", env)
         # Make sure function calls don't overwrite local variables with their parameters.
         self.assertEqual(ieval("x", env), 42)
         # Test wrong number of arguments.
         with self.assertRaises(IExecutionError):
-            ieval("(f 5)", env)
+            ieval("f(5)", env)
         with self.assertRaises(IExecutionError):
-            ieval("(f (f 5) 3 5)", env)
+            ieval("f(f(5), 3, 5)", env)
 
 
 ####################
