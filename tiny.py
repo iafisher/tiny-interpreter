@@ -369,22 +369,6 @@ class Function(namedtuple("Function", ["name", "parameters", "code"])):
 #  COMPILATION STAGE  #
 #######################
 
-# Definition of bytecode instruction names.
-BINARY_ADD = "BINARY_ADD"
-BINARY_SUB = "BINARY_SUB"
-BINARY_MUL = "BINARY_MUL"
-BINARY_DIV = "BINARY_DIV"
-LOAD_CONST = "LOAD_CONST"
-STORE_NAME = "STORE_NAME"
-LOAD_NAME = "LOAD_NAME"
-CALL_FUNCTION = "CALL_FUNCTION"
-POP_JUMP_IF_FALSE = "POP_JUMP_IF_FALSE"
-JUMP_FORWARD = "JUMP_FORWARD"
-
-
-# Placeholder value for instructions without arguments.
-NO_ARG = 0
-
 
 def icompile(ast):
     """
@@ -392,14 +376,17 @@ def icompile(ast):
     """
     if isinstance(ast, InfixNode):
         ret = icompile(ast.left) + icompile(ast.right)
+        # The arithmetic bytecode instructions have a placeholder argument of 0 so that
+        # all instructions consist of a name and an argument, but its actual value does
+        # not matter.
         if ast.op == "+":
-            ret.append((BINARY_ADD, NO_ARG))
+            ret.append(("BINARY_ADD", 0))
         elif ast.op == "-":
-            ret.append((BINARY_SUB, NO_ARG))
+            ret.append(("BINARY_SUB", 0))
         elif ast.op == "*":
-            ret.append((BINARY_MUL, NO_ARG))
+            ret.append(("BINARY_MUL", 0))
         elif ast.op == "/":
-            ret.append((BINARY_DIV, NO_ARG))
+            ret.append(("BINARY_DIV", 0))
         else:
             raise RuntimeError(f"unknown operator '{ast.op}'")
         return ret
@@ -408,29 +395,29 @@ def icompile(ast):
         true_code = icompile(ast.true_clause)
         false_code = icompile(ast.false_clause)
 
-        true_code.append((JUMP_FORWARD, len(false_code) + 1))
-        condition_code.append((POP_JUMP_IF_FALSE, len(true_code) + 1))
+        true_code.append(("JUMP_FORWARD", len(false_code) + 1))
+        condition_code.append(("POP_JUMP_IF_FALSE", len(true_code) + 1))
         return condition_code + true_code + false_code
     elif isinstance(ast, CallNode):
         ret = []
         for arg in reversed(ast.args):
             ret += icompile(arg)
-        ret.append((LOAD_NAME, ast.name))
-        ret.append((CALL_FUNCTION, len(ast.args)))
+        ret.append(("LOAD_NAME", ast.name))
+        ret.append(("CALL_FUNCTION", len(ast.args)))
         return ret
     elif isinstance(ast, LetNode):
         ret = icompile(ast.expr)
-        ret.append((STORE_NAME, ast.symbol))
+        ret.append(("STORE_NAME", ast.symbol))
         return ret
     elif isinstance(ast, FnNode):
         f = Function(ast.symbol, ast.params, icompile(ast.body))
-        return [(LOAD_CONST, f), (STORE_NAME, ast.symbol)]
+        return [("LOAD_CONST", f), ("STORE_NAME", ast.symbol)]
     elif isinstance(ast, str):
-        return [(LOAD_NAME, ast)]
+        return [("LOAD_NAME", ast)]
     elif isinstance(ast, int):
-        return [(LOAD_CONST, ast)]
+        return [("LOAD_CONST", ast)]
     elif isinstance(ast, Function):
-        return [(LOAD_CONST, ast)]
+        return [("LOAD_CONST", ast)]
     else:
         raise RuntimeError(f"don't know how to compile object of type '{type(ast)}'")
 
@@ -442,51 +429,51 @@ def icompile(ast):
 
 def iexec(codeobj, env):
     """Execute a code object in the given environment."""
-    stack = []  # type: List[Any]
+    stack = []
     pc = 0
     while pc < len(codeobj):
         inst, arg = codeobj[pc]
-        if inst == LOAD_CONST:
+        if inst == "LOAD_CONST":
             stack.append(arg)
             pc += 1
-        elif inst == BINARY_ADD:
+        elif inst == "BINARY_ADD":
             right = stack.pop()
             left = stack.pop()
             stack.append(left + right)
             pc += 1
-        elif inst == BINARY_SUB:
+        elif inst == "BINARY_SUB":
             right = stack.pop()
             left = stack.pop()
             stack.append(left - right)
             pc += 1
-        elif inst == BINARY_MUL:
+        elif inst == "BINARY_MUL":
             right = stack.pop()
             left = stack.pop()
             stack.append(left * right)
             pc += 1
-        elif inst == BINARY_DIV:
+        elif inst == "BINARY_DIV":
             right = stack.pop()
             left = stack.pop()
             stack.append(left / right)
             pc += 1
-        elif inst == STORE_NAME:
+        elif inst == "STORE_NAME":
             env[arg] = stack.pop()
             pc += 1
-        elif inst == LOAD_NAME:
+        elif inst == "LOAD_NAME":
             try:
                 stack.append(env[arg])
             except KeyError:
                 raise TinyError(f"unbound identifier '{arg}'")
             pc += 1
-        elif inst == POP_JUMP_IF_FALSE:
+        elif inst == "POP_JUMP_IF_FALSE":
             top = stack.pop()
             if top:
                 pc += 1
             else:
                 pc += arg
-        elif inst == JUMP_FORWARD:
+        elif inst == "JUMP_FORWARD":
             pc += arg
-        elif inst == CALL_FUNCTION:
+        elif inst == "CALL_FUNCTION":
             new_env = ChainMap({}, env)
             function = stack.pop()
             if isinstance(function, Function):
@@ -633,7 +620,7 @@ class ExecTests(unittest.TestCase):
 
 def repl():
     """Run the read-eval-print loop."""
-    env = {}  # type: EnvType
+    env = {}
     try:
         while True:
             expr = input(">>> ").strip()
